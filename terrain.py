@@ -327,13 +327,15 @@ def relief_png(H, B, path, mark=None, scale=3):
     Path(path).write_bytes(png)
 
 
-def analyze_world(level, out_dir=None):
-    """Mede um mundo de worlds/<level>. Grava resultados/relevo/<level>.png e .json e devolve as metricas."""
+def analyze_world(level, out_dir=None, rmax=45):
+    """Mede um mundo de worlds/<level>. Grava resultados/relevo/<level>.png e .json e devolve as metricas.
+    rmax = maior anel procurado, em celulas de 4 blocos. O padrao (45 = 180 blocos) varre a area toda; um mundo
+    gerado em volta do centro de um anel grande pede um rmax maior (a busca fica perto do meio da area)."""
     out = Path(out_dir) if out_dir else BASE / "resultados" / "relevo"
     out.mkdir(parents=True, exist_ok=True)
     cells = sample_world(BASE / "worlds" / level)
     H, B, gx0, gz0 = to_grid(cells)
-    best = ring_score(H, B) or {"score": 0.0}
+    best = ring_score(H, B, rmax=rmax) or {"score": 0.0}
     mark = (best["cx"], best["cz"]) if "cx" in best else None
     if mark:
         best["centro"] = {"x": (gx0 + best["cx"]) * STRIDE, "z": (gz0 + best["cz"]) * STRIDE}

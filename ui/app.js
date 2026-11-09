@@ -50,7 +50,11 @@ const save = () => { store.set('filter', state.filter); store.set('sort', state.
 // Cada tile cobre 500 blocos; desenhamos os que tocam a area em volta do centro (o spawn) e recortamos 960x510 blocos.
 const centerOf = (s) => s.centro || s.spawn || { x: 0, z: 0 };
 // o Chunky gera chunks inteiros, entao a borda da area fica em branco: recorta 450 blocos (nao 480) para cada lado
-const viewOf = (s) => { const c = centerOf(s); return { x0: c.x - 450, z0: c.z - 239, w: 900, h: 478 }; };
+// a janela acompanha o raio da seed (aneis menores geram menos area); proporcao 320:170 da miniatura
+const viewOf = (s) => {
+  const c = centerOf(s), half = Math.min(450, (s.raio || 480) - 30), hh = Math.round(half * 0.531);
+  return { x0: c.x - half, z0: c.z - hh, w: 2 * half, h: 2 * hh };
+};
 function drawThumb(canvas, s) {
   const V = viewOf(s), W = (canvas.width = 320), H = (canvas.height = 170), k = W / V.w;
   const ctx = canvas.getContext('2d');
@@ -62,10 +66,12 @@ function drawThumb(canvas, s) {
       img.src = `../maps/${s.id}/tiles/1/x${tx}/z${tz}.png`;
     }
 }
+// posicao do pino do spawn na miniatura, ou null se o spawn cai fora da janela (a area pode ser centrada no anel)
 function pinPos(s) {
   const V = viewOf(s), p = s.spawn || centerOf(s);
   const x = ((p.x - V.x0) / V.w) * 100, z = ((p.z - V.z0) / V.h) * 100;
-  return `left:${Math.min(98, Math.max(2, x))}%;top:${Math.min(96, Math.max(4, z))}%`;
+  if (x < 0 || x > 100 || z < 0 || z > 100) return null;
+  return `left:${x}%;top:${z}%`;
 }
 
 /* ------------------------------ biblioteca ------------------------------ */
@@ -103,7 +109,7 @@ function card(s) {
   const tags = (hasSnow(s) ? ['Neve'] : []).concat(tagsOf(s)).slice(0, 4);
   // aprovada: tiles do BlueMap; candidata/descartada com analise: mapa de relevo visto de cima; senao, aviso
   const thumb = s.mapa
-    ? `<canvas data-thumb="${esc(s.id)}" aria-hidden="true"></canvas><div class="pin" role="img" aria-label="Spawn" title="Spawn" style="${pinPos(s)}"></div>`
+    ? `<canvas data-thumb="${esc(s.id)}" aria-hidden="true"></canvas>${pinPos(s) ? `<div class="pin" role="img" aria-label="Spawn" title="Spawn" style="${pinPos(s)}"></div>` : ''}`
     : s.imagem ? `<img src="relevo/${esc(s.id)}.png" alt="Relevo da seed visto de cima" loading="lazy">`
     : `<div class="none">${ok ? 'Mapa não encontrado' : 'Seed descartada: sem mapa'}</div>`;
   const badge = ok ? '<span class="badge ok">Aprovada</span>'

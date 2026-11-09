@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import terrain                      # mede o relevo do mundo (funil antes do BlueMap)
+import triagem                      # etapa 0 (cubiomes); a DLL so e carregada quando a triagem roda
 
 # ============================ CONFIGURACAO ============================
 BASE = Path(__file__).resolve().parent
@@ -361,8 +362,11 @@ def prepare(seed, rules, radius, verbose, info=True, anel_min=None, center=None)
         return f"falha ao mover mundo: {e}", hits, spawn, None
     if anel_min is None:
         return "ok", hits, spawn, None
+    # mundo gerado em volta do centro de um anel: procura aneis maiores (a busca fica perto do meio da area);
+    # sem centro (spawn), mantem o padrao, que varre a area toda
+    rmax = max(45, min(100, radius // terrain.STRIDE - 8)) if center else 45
     try:
-        relevo = terrain.analyze_world(level)
+        relevo = terrain.analyze_world(level, rmax=rmax)
     except Exception as e:                                     # mundo estranho: guarda para investigar
         return f"falha na analise: {e}", hits, spawn, None
     if relevo["score"] < anel_min:
@@ -587,7 +591,7 @@ def aprovar(nota_min=JUIZ_NOTA_MIN, radius=RADIUS):
             shutil.rmtree(WORLDS_DIR / level, ignore_errors=True)
             status = "descartada"
         feitos[status] += 1
-        write_row(seed, status, hits, spawn, mins, radius, info.get("centro"), info.get("triagem"))
+        write_row(seed, status, hits, spawn, mins, info.get("raio", radius), info.get("centro"), info.get("triagem"))
     return feitos
 
 
@@ -598,29 +602,29 @@ def run_seeds(seeds, rules, radius, verbose, info, limit, log, anel_min=None, ce
     done = done_seeds()
     w = csv.writer(log, delimiter=";")
     pool = ThreadPoolExecutor(max_workers=1)
-    pending = None                       # (future, seed, hits, spawn, t0, triagem) da seed que esta renderizando
+    pending = None                       # (future, seed, hits, spawn, t0, triagem, raio) da seed que esta renderizando
     ran, t_start = 0, time.time()
     centros = centros or {}
 
-    def record(seed, status, hits, spawn, t0, tri=None):
+    def record(seed, status, hits, spawn, t0, tri=None, rad=radius):
         mins = (time.time() - t0) / 60   # com a sobreposicao, o tempo de uma seed inclui o que correu junto
         brief = {k.split()[-1]: (v["dist"] if v else None) for k, v in hits.items()}
         print(f"   -> {seed}: {status} {brief} ({mins:.1f} min)", flush=True)
-        save_seed(seed, status, hits, spawn, mins, radius, {"x": tri["x"], "z": tri["z"]} if tri else None, tri)
+        save_seed(seed, status, hits, spawn, mins, rad, {"x": tri["x"], "z": tri["z"]} if tri else None, tri)
         w.writerow([seed, status, json.dumps(brief), f"{mins:.1f}"])
         log.flush()
         build_index()
 
     def finish():
         nonlocal pending
-        fut, seed, hits, spawn, t0, tri = pending
+        fut, seed, hits, spawn, t0, tri, rad = pending
         pending = None
         try:
             ok = fut.result()
         except Exception as e:           # um render quebrado nao derruba a rodada
             print(f"   render falhou: {e}")
             ok = False
-        record(seed, "ok" if ok else "falha no bluemap", hits, spawn, t0, tri)
+        record(seed, "ok" if ok else "falha no bluemap", hits, spawn, t0, tri, rad)
 
     try:
         for i, seed in enumerate(seeds, 1):
@@ -635,7 +639,10 @@ def run_seeds(seeds, rules, radius, verbose, info, limit, log, anel_min=None, ce
             t0 = time.time()
             print(f"[{i}/{len(seeds)}] {seed}: gerando...", flush=True)
             tri = centros.get(seed)
-            status, hits, spawn, relevo = prepare(seed, rules, radius, verbose, info, anel_min,
+            rad = triagem.adaptive_radius(tri["raio"], radius) if tri else radius   # anel + margem, nao um raio fixo
+            if tri:
+                print(f"   raio de geracao: {rad} blocos (anel ~{tri['raio']})", flush=True)
+            status, hits, spawn, relevo = prepare(seed, rules, rad, verbose, info, anel_min,
                                                   {"x": tri["x"], "z": tri["z"]} if tri else None)
             if relevo:
                 est = f" (cubiomes previu {tri['score']})" if tri else ""
@@ -644,9 +651,9 @@ def run_seeds(seeds, rules, radius, verbose, info, limit, log, anel_min=None, ce
                 if pending:
                     finish()             # so um render por vez: espera o anterior
                 print(f"   {seed}: renderizando 3D em segundo plano...", flush=True)
-                pending = (pool.submit(render, seed, safe_id(seed), i, spawn, hits), seed, hits, spawn, t0, tri)
+                pending = (pool.submit(render, seed, safe_id(seed), i, spawn, hits), seed, hits, spawn, t0, tri, rad)
             else:
-                record(seed, status, hits, spawn, t0, tri)
+                record(seed, status, hits, spawn, t0, tri, rad)
     finally:
         if pending:
             finish()
@@ -729,7 +736,6 @@ def main():
         return
     centros = None
     if args.garimpar:
-        import triagem                          # so aqui: precisa da DLL do cubiomes (native/build.ps1)
         picks = triagem.screen(args.amostra or 60 * args.garimpar, args.garimpar,
                                args.triagem_min if args.triagem_min is not None else triagem.TRIAGEM_MIN, args.workers)
         if not picks:

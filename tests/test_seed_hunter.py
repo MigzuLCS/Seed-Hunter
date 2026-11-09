@@ -48,7 +48,7 @@ class PipelineTests(unittest.TestCase):
         import io, threading, time
         events, lock = [], threading.Lock()
         live = {"n": 0, "max": 0}
-        self.centers_seen, self.saved = {}, {}
+        self.centers_seen, self.saved, self.radius_seen = {}, {}, {}
 
         def log_ev(*e):
             with lock:
@@ -56,6 +56,7 @@ class PipelineTests(unittest.TestCase):
 
         def fake_prepare(seed, rules, radius, verbose, info=True, anel_min=None, center=None):
             self.centers_seen[seed] = center
+            self.radius_seen[seed] = radius
             log_ev("prep_start", seed); time.sleep(0.2); log_ev("prep_end", seed)
             return statuses[seed], {}, {"x": 0, "y": 64, "z": 0}, None
 
@@ -115,7 +116,7 @@ class FunnelTests(unittest.TestCase):
             (sh.SERVER_DIR / level).mkdir()
             return "ok", {"structure #minecraft:village": {"x": 1, "y": None, "z": 2, "dist": 5}}, {"x": 0, "y": 64, "z": 0}
 
-        def fake_analyze(level):
+        def fake_analyze(level, out_dir=None, rmax=45):
             (sh.DATA_DIR / "relevo" / f"{level}.png").write_bytes(b"\x89PNG")
             return {"score": self.scores[level]}
 
@@ -234,6 +235,17 @@ class RingCenterTests(unittest.TestCase):
         self.assertIsNone(p.centers_seen["2"])                              # sem triagem: usa o spawn
         self.assertEqual(p.saved["1"], ({"x": 276, "z": -152}, tri))        # centro e triagem ficam gravados
         self.assertEqual(p.saved["2"], (None, None))
+
+    def test_adaptive_radius_per_seed(self):
+        mk = lambda s, raio: {"seed": s, "score": 0.6, "neve": 0.5, "raio": raio, "x": 10, "z": 20}
+        p = PipelineTests()
+        p.run_fake({"a": "sem relevo", "b": "sem relevo", "c": "sem relevo", "d": "sem relevo"}, {},
+                   centros={"a": mk("a", 120), "b": mk("b", 300), "c": mk("c", 900)})
+        self.assertEqual(p.radius_seen["a"], 320)        # anel pequeno: o minimo (anel + margem ficaria < 320)
+        self.assertEqual(p.radius_seen["b"], 460)        # anel de 300 + margem de 160
+        self.assertEqual(p.radius_seen["c"], 960)        # limitado ao maximo
+        self.assertEqual(p.radius_seen["d"], 480)        # sem triagem: o raio fixo padrao
+        self.assertEqual(p.saved["a"][0], {"x": 10, "z": 20})
 
 
 class LocateCmdTests(unittest.TestCase):

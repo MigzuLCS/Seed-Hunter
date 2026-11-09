@@ -7,6 +7,20 @@ import shcubiomes
 HAS_DLL = shcubiomes.DLL.exists()
 
 
+class AdaptiveRadiusTests(unittest.TestCase):
+    def test_clamps_and_margin(self):
+        import triagem
+        self.assertEqual(triagem.adaptive_radius(100), triagem.RAIO_MIN)                 # pequeno: minimo
+        self.assertEqual(triagem.adaptive_radius(250), 250 + triagem.MARGEM)             # medio: anel + margem
+        self.assertEqual(triagem.adaptive_radius(5000), triagem.RAIO_MAX)                # enorme: maximo
+        self.assertEqual(triagem.adaptive_radius(None, 480), 480)                        # sem anel: o padrao
+
+    def test_window_covers_largest_ring(self):
+        import triagem
+        # a janela precisa conter o maior anel procurado (rmax em celulas de 4 blocos) com folga dos dois lados
+        self.assertGreater(triagem.CHUNKS * 16, triagem.RMAX * 4 * 2)
+
+
 @unittest.skipUnless(HAS_DLL, "compile native/build.ps1 para gerar native/shbiomes.dll")
 class TriagemTests(unittest.TestCase):
     def test_known_ring_seed_scores_and_locates(self):

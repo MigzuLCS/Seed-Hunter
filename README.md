@@ -86,11 +86,13 @@ O MSVC compila os arquivos de bioma (o README do fork diz que ele não é suport
 python seed_hunter.py --garimpar 6 --amostra 600    # avalia 600 seeds só com o cubiomes e gera as 6 melhores
 ```
 
-1. `triagem.py` avalia o anel de `--amostra` seeds aleatórias em paralelo (~8 seeds/s com 8 processos) e fica com as `N` de maior score (mínimo `--triagem-min`, 0,4: o score só-cubiomes fica uns 30% abaixo do medido no mundo).
-2. O Chunky gera **em volta do centro do anel** (e não do spawn), para o anel caber na área gerada. O centro e a triagem ficam gravados no JSON da seed.
+1. `triagem.py` avalia o anel de `--amostra` seeds aleatórias em paralelo e fica com as `N` de maior score (mínimo `--triagem-min`, 0,4: o score só-cubiomes fica uns 30% abaixo do medido no mundo). A janela avaliada tem **720 blocos de raio** em volta de (0,0) e procura anéis de **até 300 blocos de raio** (`CHUNKS` e `RMAX` em `triagem.py`). Custo medido: ~3 seeds/s com 8 processos (a janela de 480 blocos fazia ~8/s).
+2. O Chunky gera **em volta do centro do anel** (e não do spawn), com **raio adaptativo**: raio do anel + 160 blocos, entre 320 e 960 (`adaptive_radius`). Um anel pequeno gera menos que os 480 fixos (menos tempo e disco), e um anel grande ganha o que precisa. O spawn pode ficar fora da área gerada; o jogo gera o resto normalmente ao jogar. O centro, o raio e a triagem ficam gravados no JSON da seed.
 3. O resto do funil é o mesmo: análise de relevo no mundo gerado, juiz de imagem e `--aprovar`.
 
 Na rodada de teste, as 6 melhores de 600 deram score de relevo de 0,75 a 0,85 no mundo gerado e o cubiomes previu valores próximos (0,70 a 0,82). Já 24 seeds aleatórias sem triagem renderam só 4 candidatas, com máximo de 0,74.
+
+Com a janela de 720 e o raio adaptativo (400 seeds em 124 s, 4 geradas): raios de geração de 320 a 424 blocos, 0,6 a 0,9 min e 30 a 57 MB por seed (contra ~1 min e ~60 MB com 480 fixos). **Cuidado:** anéis maiores dão mais falsos positivos, porque há mais combinações de centro e raio. O melhor da rodada (score 0,80, anel de ~264 blocos) é visualmente um lago num vale com picos nevados soltos, não um anel; o juiz de imagem continua sendo o filtro final.
 
 ### Jogar a seed no Minecraft
 

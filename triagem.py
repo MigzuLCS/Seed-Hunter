@@ -13,8 +13,21 @@ import shcubiomes
 import terrain
 
 CAL_A, CAL_B = 0.80, 20.2         # altura_real ~ A * altura_cubiomes + B (regressao em native/altura.py)
-CHUNKS = 30                       # a janela avaliada e a mesma area que o Chunky gera: 30 chunks de raio
+CHUNKS = 45                       # janela avaliada: 45 chunks de raio = 720 blocos em volta de (0,0)
+RMAX = 75                         # maior anel procurado, em celulas de 4 blocos = 300 blocos de raio
 TRIAGEM_MIN = 0.4                 # o score so-cubiomes fica uns 30% abaixo do medido no mundo (0,5): 0,4 equivale
+
+# Raio de geracao adaptativo: o Chunky gera so o anel mais uma margem, em vez de um raio fixo.
+MARGEM = 160                      # blocos alem da crista do anel
+RAIO_MIN, RAIO_MAX = 320, 960     # limites do raio gerado (blocos)
+
+
+def adaptive_radius(ring_radius, default=None):
+    """Raio (blocos) a gerar para um anel de raio `ring_radius`: anel + margem, entre RAIO_MIN e RAIO_MAX.
+    Sem anel conhecido (None) devolve `default`."""
+    if ring_radius is None:
+        return default
+    return max(RAIO_MIN, min(RAIO_MAX, int(ring_radius) + MARGEM))
 
 
 def estimate_grid(seed, center_x=0, center_z=0, chunks=CHUNKS):
@@ -32,7 +45,7 @@ def estimate_grid(seed, center_x=0, center_z=0, chunks=CHUNKS):
 def score_seed(seed, center_x=0, center_z=0):
     """Score de anel (0-1) de uma seed e o centro do anel em blocos. Roda em processo separado (precisa ser top-level)."""
     H, B, gx0, gz0 = estimate_grid(seed, center_x, center_z)
-    best = terrain.ring_score(H, B)
+    best = terrain.ring_score(H, B, rmax=RMAX)
     if not best:
         return {"seed": seed, "score": 0.0}
     return {"seed": seed, "score": best["score"], "neve": best["neve"], "raio": best["raio"],

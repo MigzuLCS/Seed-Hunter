@@ -48,6 +48,16 @@ Para ver os resultados: `cd bluemap && java -jar bluemap-cli.jar -w` e abra **ht
 
 **Reinicie o servidor (`-w`) depois de gerar seeds novas ou cavernas:** ele só serve os mapas que existiam quando subiu. Se o navegador mostrar "erro ao carregar este mapa" logo depois disso, recarregue com Ctrl+Shift+R (o BlueMap deixa respostas em cache por 24 h).
 
+### Jogar a seed no Minecraft
+
+O botão "Jogar no Minecraft" do inspetor mostra o comando, ou rode direto:
+
+```
+python seed_hunter.py --jogar 12345
+```
+
+Copia o mundo já gerado para `%APPDATA%\.minecraft\saves\SeedHunter_<seed>` (ou outra pasta com `--saves`). No Minecraft 26.3, abra Um jogador e procure por `SeedHunter_<seed>`. Fora da área gerada o jogo continua gerando o mesmo terreno. Se o mundo já existir lá, o script não sobrescreve (seu progresso fica seguro); `--forcar` recopia e apaga o progresso. Cada mundo ocupa cerca de 60 MB.
+
 ### Cavernas (raio-X), sob demanda
 
 Um segundo mapa com as cavernas abertas custa uns 5 min e ~200 MB por seed, então só é gerado para as seeds que você escolher:

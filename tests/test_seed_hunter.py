@@ -90,6 +90,35 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(rows, {"a": "ok", "b": "ok", "c": "reprovada", "d": "falha no bluemap", "e": "falha no bluemap"})
 
 
+class PlayWorldTests(unittest.TestCase):
+    def test_copy_keeps_progress_and_skips_lock(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            world = d / "worlds" / "seed_n42"
+            (world / "dimensions").mkdir(parents=True)
+            (world / "level.dat").write_text("x"); (world / "session.lock").write_text("lock")
+            saves = d / "saves"; saves.mkdir()
+            old = sh.WORLDS_DIR; sh.WORLDS_DIR = d / "worlds"
+            try:
+                dst, copied = sh.play_world("-42", saves)
+                self.assertTrue(copied)
+                self.assertEqual(dst.name, "SeedHunter_n42")
+                self.assertTrue((dst / "level.dat").exists())
+                self.assertFalse((dst / "session.lock").exists())
+                (dst / "progresso.txt").write_text("jogador")            # o jogador mexeu no mundo
+                dst2, copied2 = sh.play_world("-42", saves)              # segunda chamada nao sobrescreve
+                self.assertFalse(copied2)
+                self.assertTrue((dst2 / "progresso.txt").exists())
+                _, copied3 = sh.play_world("-42", saves, force=True)     # --forcar recopia
+                self.assertTrue(copied3)
+                self.assertFalse((dst / "progresso.txt").exists())
+                with self.assertRaises(FileNotFoundError):
+                    sh.play_world("999", saves)                          # seed sem mundo
+            finally:
+                sh.WORLDS_DIR = old
+
+
 class LocateCmdTests(unittest.TestCase):
     def test_measured_from_spawn(self):
         self.assertEqual(

@@ -6,7 +6,7 @@ Fluxo por seed: sobe o Paper -> filtra com /locate (medido do spawn) ->
 pre-gera com Chunky -> renderiza no BlueMap com marcadores nativos.
 O resultados.csv e a fonte da verdade para retomar de onde parou.
 """
-import argparse, csv, json, queue, random, re, shutil, subprocess, sys, threading, time
+import argparse, csv, json, os, queue, random, re, shutil, subprocess, sys, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -412,6 +412,28 @@ def make_caves(seeds):
         print(f"   -> {'ok' if r.returncode == 0 else 'falha'} ({(time.time() - t0) / 60:.1f} min)")
 
 
+def default_saves():
+    """Pasta de mundos do Minecraft Java (launcher padrao)."""
+    base = Path(os.environ["APPDATA"]) / ".minecraft" if os.environ.get("APPDATA") else Path.home() / ".minecraft"
+    return base / "saves"
+
+
+def play_world(seed, saves, force=False):
+    """Copia o mundo pre-gerado de uma seed para a pasta saves do Minecraft e devolve o destino.
+    O formato do Paper 26.x e o mesmo do jogo; fora da area gerada o jogo continua gerando normalmente."""
+    level = safe_id(seed)
+    src = WORLDS_DIR / level
+    if not src.exists():
+        raise FileNotFoundError(f"{seed}: sem mundo em worlds/ (so seeds aprovadas tem mundo)")
+    dst = Path(saves) / ("SeedHunter_" + level[len("seed_"):])
+    if dst.exists():
+        if not force:
+            return dst, False                      # ja copiado: nao sobrescreve o progresso do jogador
+        shutil.rmtree(dst)
+    shutil.copytree(src, dst, ignore=shutil.ignore_patterns("session.lock"))
+    return dst, True
+
+
 def run_seeds(seeds, rules, radius, verbose, info, limit, log):
     """Pipeline com sobreposicao: enquanto o BlueMap renderiza a seed N, o Paper ja filtra/gera a N+1.
     Um render por vez (o proximo espera o anterior), e seeds reprovadas nunca vao para o BlueMap."""
@@ -484,7 +506,22 @@ def main():
     ap.add_argument("--sem-achados", action="store_true", help="pula os /locate informativos (mais rapido)")
     ap.add_argument("--cavernas", nargs="+", metavar="SEED", help="gera o mapa com cavernas abertas das seeds indicadas")
     ap.add_argument("--reindex", action="store_true", help="so atualiza a interface e o index.json")
+    ap.add_argument("--jogar", nargs="+", metavar="SEED", help="copia o mundo das seeds para a pasta saves do Minecraft")
+    ap.add_argument("--saves", metavar="PASTA", help="pasta saves do Minecraft (padrao: %%APPDATA%%\\.minecraft\\saves)")
+    ap.add_argument("--forcar", action="store_true", help="com --jogar: recopia mesmo que o mundo ja exista nos saves (apaga o progresso)")
     args = ap.parse_args()
+
+    if args.jogar:
+        saves = Path(args.saves) if args.saves else default_saves()
+        for s in args.jogar:
+            try:
+                dst, copied = play_world(s, saves, args.forcar)
+            except FileNotFoundError as e:
+                print(e)
+                continue
+            print(f"{s}: {'copiado para' if copied else 'ja existe em'} {dst}" + ("" if copied else "  (use --forcar para recopiar; apaga o progresso)"))
+        print("No Minecraft 26.3: Um jogador > procure o mundo SeedHunter_<seed>.")
+        return
 
     rules = LOCATE_RULES if args.rule is None else [parse_rule(r) for r in args.rule if not r.startswith("none")]
     check_setup()

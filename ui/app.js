@@ -221,7 +221,11 @@ function renderInspector(id) {
     $('.views').innerHTML = defs.map(([k, t, m, mode, on]) => {
       const pressed = view.map === m && view.mode === mode;
       return `<button type="button" class="view" data-view="${k}" aria-pressed="${pressed}" ${on ? '' : `disabled title="Gere com: python seed_hunter.py --cavernas ${esc(s.seed)}"`}>${t}</button>`;
-    }).join('') + `<a class="btn" href="../${mkHash(s.id, sp.x, sp.y, sp.z, 300, 'perspective')}" target="_blank" rel="noopener">Abrir no BlueMap</a>`;
+    }).join('') + `<a class="btn" href="../${mkHash(s.id, sp.x, sp.y, sp.z, 300, 'perspective')}" target="_blank" rel="noopener">Abrir no BlueMap</a>
+      <button type="button" class="btn" id="play">Jogar no Minecraft</button>`;
+    $('#play').onclick = () => openDialog('Jogar esta seed no Minecraft',
+      'Copia o mundo já gerado para a pasta de mundos do jogo. Depois abra o Minecraft 26.3, vá em Um jogador e procure SeedHunter_' + s.id.replace(/^seed_/, '') + '. Fora da área gerada o jogo continua gerando o mesmo terreno. Se o mundo já estiver lá, ele não é sobrescrito, então seu progresso fica seguro.',
+      `python seed_hunter.py --jogar ${s.seed}`);
     document.querySelectorAll('[data-view]').forEach((b) => (b.onclick = () => {
       const d = defs.find((x) => x[0] === b.dataset.view), c = parseHash(frame().contentWindow.location.hash);
       const x = isFinite(c.x) ? c.x : sp.x, y = isFinite(c.y) ? c.y : sp.y, z = isFinite(c.z) ? c.z : sp.z;

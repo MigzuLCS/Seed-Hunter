@@ -112,6 +112,8 @@ button{cursor:pointer}
 .place.out i{opacity:.4} .place.out .t span{color:var(--text2)}
 .place .out-tag{font:12px var(--sans);color:var(--muted)}
 .view[aria-pressed=true]{border-color:var(--accent);background:rgba(42,38,24,.95)}
+.views button.btn{background:rgba(15,19,24,.88)}
+.views button.btn:hover{background:rgba(35,43,54,.95)}
 .views a.btn{display:flex;align-items:center;text-decoration:none;background:var(--accent);color:var(--accent-ink);border:0;font-weight:600}
 .cam{position:absolute;left:412px;bottom:16px;display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:12px;background:rgba(15,19,24,.88);border:1px solid var(--line)}
 .cam .n{width:40px;height:40px;border-radius:50%;border:1px solid var(--line2);display:flex;align-items:center;justify-content:center;font:700 14px var(--display);color:var(--accent)}

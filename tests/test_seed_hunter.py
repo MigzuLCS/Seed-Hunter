@@ -34,6 +34,13 @@ class ParseTests(unittest.TestCase):
         self.assertIn("y: 100", out)   # y '~' vira 100
 
 
+class PatchConfTests(unittest.TestCase):
+    def test_only_active_lines(self):
+        src = "# hires-slider-default: 1\nhires-slider-default: 100\nother: 5\n"
+        out = sh.patch_conf(src, {"hires-slider-default": 500})
+        self.assertEqual(out, "# hires-slider-default: 1\nhires-slider-default: 500\nother: 5\n")
+
+
 class SeedsFileTests(unittest.TestCase):
     def test_bom_and_comments(self):
         import tempfile

@@ -33,6 +33,10 @@ LOCATE_RULES = [
 ]
 ORIGIN = "execute in minecraft:overworld positioned 0 64 0 run locate "
 
+# Ajustes do site do BlueMap (config/webapp.conf). O mapa so tem RADIUS blocos,
+# entao tudo pode ser renderizado em alta resolucao (o padrao do BlueMap e 100).
+WEBAPP_TWEAKS = {"hires-slider-max": 1000, "hires-slider-default": 500}
+
 MAP_TEMPLATE = """world: "{world}"
 dimension: "minecraft:overworld"
 name: "Seed {seed}"
@@ -153,6 +157,13 @@ def set_props(values):
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def patch_conf(text, values):
+    """Troca 'chave: valor' nas linhas ativas de um .conf, sem tocar nos comentarios."""
+    for key, val in values.items():
+        text = re.sub(rf"^(\s*{re.escape(key)}:\s*)\S+", rf"\g<1>{val}", text, flags=re.M)
+    return text
+
+
 def check_setup():
     problems = []
     if not (SERVER_DIR / PAPER_JAR).exists():
@@ -173,6 +184,12 @@ def check_setup():
         for p in problems:
             print("ERRO:", p)
         sys.exit(1)
+    webapp = BLUEMAP_DIR / "config" / "webapp.conf"
+    if webapp.exists():
+        old = webapp.read_text(encoding="utf-8")
+        new = patch_conf(old, WEBAPP_TWEAKS)
+        if new != old:
+            webapp.write_text(new, encoding="utf-8")
     maps = BLUEMAP_DIR / "config" / "maps"
     maps.mkdir(parents=True, exist_ok=True)
     for conf in maps.glob("*.conf"):

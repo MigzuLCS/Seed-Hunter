@@ -41,6 +41,37 @@ class PatchConfTests(unittest.TestCase):
         self.assertEqual(out, "# hires-slider-default: 1\nhires-slider-default: 500\nother: 5\n")
 
 
+class IndexTests(unittest.TestCase):
+    def test_build_index(self):
+        import json, tempfile
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            (d / "resultados").mkdir()
+            (d / "bluemap" / "web" / "maps" / "seed_1").mkdir(parents=True)
+            (d / "bluemap" / "web" / "maps" / "seed_1_cav").mkdir()
+            (d / "resultados.csv").write_text(
+                "seed;status;achados;minutos\n"
+                '1;falha no chunky;"{}";1.0\n'                                   # linha antiga da seed 1...
+                '1;ok;"{""#minecraft:village"": 100}";3.0\n'                     # ...a ultima vence
+                '2;reprovada;"{""#minecraft:village"": 900}";0.5\n', encoding="utf-8")
+            (d / "resultados" / "seed_1.json").write_text(json.dumps(
+                {"spawn": {"x": 1, "y": 2, "z": 3}, "raio": 480,
+                 "achados": {"structure #minecraft:village": {"x": 10, "y": None, "z": 20, "dist": 100}}}), encoding="utf-8")
+            saved = (sh.RESULTS, sh.DATA_DIR, sh.BLUEMAP_DIR, sh.WEB_UI)
+            sh.RESULTS, sh.DATA_DIR, sh.BLUEMAP_DIR, sh.WEB_UI = (
+                d / "resultados.csv", d / "resultados", d / "bluemap", d / "bluemap" / "web" / "ui")
+            try:
+                self.assertEqual(sh.build_index(), 2)
+                seeds = {s["seed"]: s for s in json.loads((sh.WEB_UI / "index.json").read_text(encoding="utf-8"))["seeds"]}
+            finally:
+                sh.RESULTS, sh.DATA_DIR, sh.BLUEMAP_DIR, sh.WEB_UI = saved
+        self.assertEqual(seeds["1"]["status"], "ok")
+        self.assertTrue(seeds["1"]["mapa"] and seeds["1"]["cavernas"])
+        self.assertEqual(seeds["1"]["achados"]["structure #minecraft:village"]["x"], 10)
+        self.assertFalse(seeds["2"]["mapa"])                                       # reprovada nao tem mapa
+        self.assertEqual(seeds["2"]["achados"]["#minecraft:village"], {"dist": 900})   # so as distancias do CSV
+
+
 class SeedsFileTests(unittest.TestCase):
     def test_bom_and_comments(self):
         import tempfile

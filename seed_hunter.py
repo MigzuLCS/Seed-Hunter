@@ -31,7 +31,25 @@ LOCATE_RULES = [
     # ("biome minecraft:cherry_grove", 800),
     # ("biome minecraft:dappled_forest", 800),
 ]
+# Achados informativos: rodam so depois que a seed passa no filtro e NUNCA reprovam.
+# Alimentam a lista de estruturas/biomas, as tags e os marcadores da interface.
+INFO_TARGETS = [
+    "structure minecraft:trial_chambers",
+    "structure #minecraft:ruined_portal",
+    "structure minecraft:pillager_outpost",
+    "structure minecraft:ancient_city",
+    "structure minecraft:mansion",
+    "biome minecraft:cherry_grove",
+    "biome minecraft:dappled_forest",
+    "biome minecraft:meadow",
+    "biome minecraft:jagged_peaks",
+    "biome minecraft:mushroom_fields",
+    "biome minecraft:ice_spikes",
+]
 ORIGIN = "execute in minecraft:overworld positioned 0 64 0 run locate "
+UI_DIR = BASE / "ui"                # fonte da interface (copiada para bluemap/web/ui/)
+WEB_UI = BLUEMAP_DIR / "web" / "ui"
+CAVE_SUFFIX = "_cav"                # mapa extra com cavernas abertas, gerado sob demanda
 
 # Ajustes do site do BlueMap (config/webapp.conf). O padrao do BlueMap e hires 100;
 # 300 cobre boa parte do mapa sem pesar tanto na GPU. Resolucao 0.8 alivia mais.
@@ -223,7 +241,17 @@ def done_seeds():
         return {r["seed"] for r in csv.DictReader(f, delimiter=";") if r.get("status") in STATUS_FINAL}
 
 
-def generate(seed, level, rules, radius, verbose):
+def locate_one(srv, target, timeout=180):
+    """Roda um /locate e devolve dict(x,y,z,dist), None (nao achou) ou levanta ValueError (saida inesperada)."""
+    srv.send(ORIGIN + target)
+    line = srv.wait_for(r"blocks away\)|Could not find|Unknown|Invalid", timeout)
+    hit = parse_locate(line) if line else None
+    if line and not hit and not LOCATE_FAIL.search(line):
+        raise ValueError(line[:80])
+    return hit
+
+
+def generate(seed, level, rules, radius, verbose, info=True):
     """Retorna (status, achados, spawn). O mundo fica em server/<level>."""
     set_props({"level-seed": seed, "level-name": level, "sync-chunk-writes": "false"})
     srv = Server(verbose)
@@ -232,14 +260,21 @@ def generate(seed, level, rules, radius, verbose):
             return "falha ao iniciar", {}, None
         hits = {}
         for target, max_dist in rules:
-            srv.send(ORIGIN + target)
-            line = srv.wait_for(r"blocks away\)|Could not find|Unknown|Invalid", 180)
-            hit = parse_locate(line) if line else None
-            if line and not hit and not LOCATE_FAIL.search(line):
-                return f"locate inesperado: {line[:80]}", hits, None
+            try:
+                hit = locate_one(srv, target)
+            except ValueError as e:
+                return f"locate inesperado: {e}", hits, None
             hits[target] = hit
             if hit is None or hit["dist"] > max_dist:
                 return "reprovada", hits, None
+        if info:
+            for target in INFO_TARGETS:
+                if target in hits:
+                    continue
+                try:
+                    hits[target] = locate_one(srv, target, 60)
+                except ValueError:
+                    hits[target] = None      # id desconhecido nesta versao: ignora
         srv.send("execute in minecraft:overworld run setworldspawn ~ ~ ~")   # repete o spawn atual so para le-lo
         spawn = parse_spawn(srv.wait_for(r"world spawn point", 30) or "")
         for cmd in (f"chunky world {level}", "chunky center 0 0", "chunky shape square",
@@ -275,11 +310,11 @@ def render(seed, level, sorting, spawn, hits):
     return r.returncode == 0
 
 
-def process(seed, index, rules, radius, verbose):
+def process(seed, index, rules, radius, verbose, info=True):
     level = safe_id(seed)
     shutil.rmtree(SERVER_DIR / level, ignore_errors=True)      # restos de uma rodada interrompida
     shutil.rmtree(WORLDS_DIR / level, ignore_errors=True)
-    status, hits, spawn = generate(seed, level, rules, radius, verbose)
+    status, hits, spawn = generate(seed, level, rules, radius, verbose, info)
     src = SERVER_DIR / level
     if status == "ok" and not src.exists():
         status = "mundo nao encontrado"
@@ -287,16 +322,79 @@ def process(seed, index, rules, radius, verbose):
         try:
             shutil.move(str(src), str(WORLDS_DIR / level))
         except OSError as e:
-            return f"falha ao mover mundo: {e}", hits
+            return f"falha ao mover mundo: {e}", hits, spawn
         print("   renderizando 3D...", flush=True)
-        if render(seed, level, index, spawn, hits):
-            (DATA_DIR / f"{level}.json").write_text(
-                json.dumps({"seed": seed, "spawn": spawn, "achados": hits}, indent=2), encoding="utf-8")
-        else:
+        if not render(seed, level, index, spawn, hits):
             status = "falha no bluemap"
     else:
         shutil.rmtree(src, ignore_errors=True)
-    return status, hits
+    return status, hits, spawn
+
+
+def save_seed(seed, status, hits, spawn, mins, radius):
+    """Um JSON por seed (inclusive reprovadas): a interface le tudo daqui via index.json."""
+    level = safe_id(seed)
+    data = {"seed": seed, "id": level, "status": status, "spawn": spawn, "achados": hits,
+            "minutos": round(mins, 1), "raio": radius, "quando": time.strftime("%Y-%m-%dT%H:%M:%S")}
+    (DATA_DIR / f"{level}.json").write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def build_index():
+    """Junta resultados.csv (fonte da verdade) com resultados/*.json em bluemap/web/ui/index.json."""
+    rows = {}
+    if RESULTS.exists():
+        with RESULTS.open(encoding="utf-8-sig", newline="") as f:
+            for r in csv.DictReader(f, delimiter=";"):
+                rows[r["seed"]] = r                       # a ultima linha de cada seed vence
+    seeds = []
+    for seed, r in rows.items():
+        level = safe_id(seed)
+        extra = {}
+        p = DATA_DIR / f"{level}.json"
+        if p.exists():
+            extra = json.loads(p.read_text(encoding="utf-8"))
+        achados = extra.get("achados")
+        if achados is None:                                # linhas antigas: so as distancias do CSV
+            try:
+                achados = {k: ({"dist": v} if v is not None else None) for k, v in json.loads(r["achados"]).items()}
+            except (ValueError, KeyError):
+                achados = {}
+        has_map = (BLUEMAP_DIR / "web" / "maps" / level).exists() and r["status"] == "ok"
+        seeds.append({
+            "seed": seed, "id": level, "status": r["status"], "minutos": float(r["minutos"] or 0),
+            "spawn": extra.get("spawn"), "achados": achados, "raio": extra.get("raio", RADIUS),
+            "quando": extra.get("quando"), "mapa": has_map,
+            "cavernas": has_map and (BLUEMAP_DIR / "web" / "maps" / (level + CAVE_SUFFIX)).exists(),
+        })
+    WEB_UI.mkdir(parents=True, exist_ok=True)
+    (WEB_UI / "index.json").write_text(json.dumps(
+        {"gerado": time.strftime("%Y-%m-%dT%H:%M:%S"), "seeds": seeds}, indent=1, ensure_ascii=False), encoding="utf-8")
+    return len(seeds)
+
+
+def copy_ui():
+    """Copia ui/ para bluemap/web/ui/ (o BlueMap serve a interface na mesma origem do mapa)."""
+    if UI_DIR.exists():
+        shutil.copytree(UI_DIR, WEB_UI, dirs_exist_ok=True)
+
+
+def make_caves(seeds):
+    """Renderiza um segundo mapa por seed, com as cavernas abertas (caro: minutos e centenas de MB)."""
+    for seed in seeds:
+        level = safe_id(seed)
+        if not (WORLDS_DIR / level).exists():
+            print(f"{seed}: sem mundo em worlds/ (so seeds aprovadas tem mapa)")
+            continue
+        src = BLUEMAP_DIR / "config" / "maps" / f"{level}.conf"
+        text = src.read_text(encoding="utf-8")
+        text = re.sub(r'^(\s*name:\s*)"(.*)"', r'\1"\2 (cavernas)"', text, count=1, flags=re.M)
+        text = re.sub(r"^(\s*sorting:\s*)\d+", r"\g<1>1000", text, count=1, flags=re.M)
+        text = re.sub(r"^(\s*remove-caves-below-y:\s*)-?\d+", r"\g<1>-10000", text, count=1, flags=re.M)
+        (BLUEMAP_DIR / "config" / "maps" / f"{level}{CAVE_SUFFIX}.conf").write_text(text, encoding="utf-8")
+        print(f"{seed}: renderizando cavernas (uns 5 min)...", flush=True)
+        t0 = time.time()
+        r = subprocess.run([JAVA, f"-Xmx{BLUEMAP_RAM}", "-jar", BLUEMAP_JAR, "-r", "-m", level + CAVE_SUFFIX], cwd=BLUEMAP_DIR)
+        print(f"   -> {'ok' if r.returncode == 0 else 'falha'} ({(time.time() - t0) / 60:.1f} min)")
 
 
 def parse_rule(text):
@@ -312,10 +410,19 @@ def main():
     ap.add_argument("--rule", action="append", metavar="ALVO=DIST",
                     help='substitui LOCATE_RULES, ex.: "structure #minecraft:village=1500" (repetivel; "none=0" desliga)')
     ap.add_argument("--verbose", action="store_true", help="mostra o log do servidor")
+    ap.add_argument("--sem-achados", action="store_true", help="pula os /locate informativos (mais rapido)")
+    ap.add_argument("--cavernas", nargs="+", metavar="SEED", help="gera o mapa com cavernas abertas das seeds indicadas")
+    ap.add_argument("--reindex", action="store_true", help="so atualiza a interface e o index.json")
     args = ap.parse_args()
 
     rules = LOCATE_RULES if args.rule is None else [parse_rule(r) for r in args.rule if not r.startswith("none")]
     check_setup()
+    copy_ui()
+    if args.cavernas or args.reindex:
+        if args.cavernas:
+            make_caves(args.cavernas)
+        print(f"index.json: {build_index()} seeds")
+        return
     seeds = load_seeds(args.random)
     done = done_seeds()
     new_file = not RESULTS.exists()
@@ -333,13 +440,15 @@ def main():
             ran += 1
             t0 = time.time()
             print(f"[{i}/{len(seeds)}] {seed}: gerando...", flush=True)
-            status, hits = process(seed, i, rules, args.radius, args.verbose)
+            status, hits, spawn = process(seed, i, rules, args.radius, args.verbose, not args.sem_achados)
             mins = (time.time() - t0) / 60
             brief = {k.split()[-1]: (v["dist"] if v else None) for k, v in hits.items()}
             print(f"   -> {status} {brief} ({mins:.1f} min)")
+            save_seed(seed, status, hits, spawn, mins, args.radius)
             w.writerow([seed, status, json.dumps(brief), f"{mins:.1f}"])
             log.flush()
-    print("\nPronto! Para ver: cd bluemap && java -jar bluemap-cli.jar -w  ->  http://localhost:8100")
+            build_index()
+    print(f"\nPronto! Interface: http://localhost:8100/ui/  (servir: cd bluemap && java -jar bluemap-cli.jar -w)")
 
 
 if __name__ == "__main__":

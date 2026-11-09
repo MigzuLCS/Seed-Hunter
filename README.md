@@ -39,7 +39,24 @@ python seed_hunter.py --limit 3 --verbose  # só 3 seeds, com o log do servidor
 python seed_hunter.py --rule "structure #minecraft:village=800" --rule "biome minecraft:cherry_grove=1000"
 ```
 
-Para ver os mapas: `cd bluemap && java -jar bluemap-cli.jar -w` e abra http://localhost:8100. Troque de seed no seletor de mapas; o spawn e os achados do `/locate` aparecem como marcadores.
+Para ver os resultados: `cd bluemap && java -jar bluemap-cli.jar -w` e abra **http://localhost:8100/ui/**.
+
+- **Biblioteca:** miniatura vista de cima de cada seed, tags dos achados, favoritas, filtros e busca.
+- **Inspetor:** mapa 3D com menu lateral de estruturas e biomas (clique para voar até o local), modos Perspectiva e Vista de cima, anotações e "Escolher esta seed".
+- Favoritos, anotações e escolhidas ficam no `localStorage` do navegador.
+- O mapa puro do BlueMap continua em http://localhost:8100 (o botão "Abrir no BlueMap" leva para lá).
+
+**Reinicie o servidor (`-w`) depois de gerar seeds novas ou cavernas:** ele só serve os mapas que existiam quando subiu. Se o navegador mostrar "erro ao carregar este mapa" logo depois disso, recarregue com Ctrl+Shift+R (o BlueMap deixa respostas em cache por 24 h).
+
+### Cavernas (raio-X), sob demanda
+
+Um segundo mapa com as cavernas abertas custa uns 5 min e ~200 MB por seed, então só é gerado para as seeds que você escolher:
+
+```
+python seed_hunter.py --cavernas 12345 777
+```
+
+O botão "Cavernas" do inspetor só fica ativo nas seeds que já têm esse mapa.
 
 ## O que ele faz por seed
 
@@ -63,9 +80,11 @@ Cobrem o parser do `/locate` (com as linhas reais do Paper), do spawn, ids de pa
 ## Roteiro
 
 - [x] Pipeline: filtro, Chunky, BlueMap, retomada
+- [x] Interface: biblioteca com miniaturas e inspetor com iframe do BlueMap
+- [x] Cavernas sob demanda
 - [ ] Rodada longa com 30+ seeds
-- [ ] Mais regras de estruturas e biomas, e marcadores por tipo
-- [ ] Interface própria (biblioteca de seeds com print do spawn e inspeção)
+- [ ] Passada de design da interface (protótipo no canvas, depois ajustes no código)
+- [ ] Gerar seeds e cavernas pela própria interface (hoje é só pela linha de comando)
 
 ## Licença
 

@@ -47,21 +47,24 @@ const save = () => { store.set('filter', state.filter); store.set('sort', state.
 
 /* ------------------------------ miniatura ------------------------------ */
 // Os tiles lowres do BlueMap (nivel 1) tem 501x1002: a metade de cima e a imagem vista de cima.
-// Cada tile cobre 500 blocos; desenhamos os 4 em volta de (0,0) e recortamos 960x510 blocos.
-const VIEW = { x0: -480, z0: -255, w: 960, h: 510 };
+// Cada tile cobre 500 blocos; desenhamos os que tocam a area em volta do centro (o spawn) e recortamos 960x510 blocos.
+const centerOf = (s) => s.centro || s.spawn || { x: 0, z: 0 };
+// o Chunky gera chunks inteiros, entao a borda da area fica em branco: recorta 450 blocos (nao 480) para cada lado
+const viewOf = (s) => { const c = centerOf(s); return { x0: c.x - 450, z0: c.z - 239, w: 900, h: 478 }; };
 function drawThumb(canvas, s) {
-  const W = (canvas.width = 320), H = (canvas.height = 170), k = W / VIEW.w;
+  const V = viewOf(s), W = (canvas.width = 320), H = (canvas.height = 170), k = W / V.w;
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = '#16202B'; ctx.fillRect(0, 0, W, H);
-  for (const tx of [-1, 0]) for (const tz of [-1, 0]) {
-    const img = new Image();
-    img.onload = () => ctx.drawImage(img, 0, 0, 501, 501, (tx * 500 - VIEW.x0) * k, (tz * 500 - VIEW.z0) * k, 501 * k, 501 * k);
-    img.src = `../maps/${s.id}/tiles/1/x${tx}/z${tz}.png`;
-  }
+  for (let tx = Math.floor(V.x0 / 500); tx <= Math.floor((V.x0 + V.w) / 500); tx++)
+    for (let tz = Math.floor(V.z0 / 500); tz <= Math.floor((V.z0 + V.h) / 500); tz++) {
+      const img = new Image();
+      img.onload = () => ctx.drawImage(img, 0, 0, 501, 501, (tx * 500 - V.x0) * k, (tz * 500 - V.z0) * k, 501 * k, 501 * k);
+      img.src = `../maps/${s.id}/tiles/1/x${tx}/z${tz}.png`;
+    }
 }
 function pinPos(s) {
-  const p = s.spawn || { x: 0, z: 0 };
-  const x = ((p.x - VIEW.x0) / VIEW.w) * 100, z = ((p.z - VIEW.z0) / VIEW.h) * 100;
+  const V = viewOf(s), p = s.spawn || centerOf(s);
+  const x = ((p.x - V.x0) / V.w) * 100, z = ((p.z - V.z0) / V.h) * 100;
   return `left:${Math.min(98, Math.max(2, x))}%;top:${Math.min(96, Math.max(4, z))}%`;
 }
 
@@ -92,18 +95,18 @@ function card(s) {
   const fav = !!state.favs[s.seed];
   const tags = tagsOf(s).slice(0, 4);
   const thumb = s.mapa
-    ? `<canvas data-thumb="${esc(s.id)}" aria-hidden="true"></canvas><div class="pin" style="${pinPos(s)}"></div><span class="tag-print">vista de cima</span>`
+    ? `<canvas data-thumb="${esc(s.id)}" aria-hidden="true"></canvas><div class="pin" role="img" aria-label="Spawn" title="Spawn" style="${pinPos(s)}"></div>`
     : `<div class="none">${ok ? 'Mapa não encontrado' : 'Seed descartada no filtro: sem mapa'}</div>`;
   const badge = ok ? '<span class="badge ok">Aprovada</span>'
     : s.status === 'reprovada' ? '<span class="badge bad">Reprovada</span>' : `<span class="badge bad">${esc(s.status)}</span>`;
   const head = `<div class="thumb">${thumb}${badge}</div>
-    <div class="head"><h2>Seed ${esc(s.seed.length > 12 ? s.seed.slice(0, 11) + '…' : s.seed)}</h2><p class="sub">${esc(s.seed)}</p></div>`;
+    <div class="head"><h2>Seed ${esc(s.seed.length > 12 ? s.seed.slice(0, 11) + '…' : s.seed)}</h2>${s.seed.length > 12 ? `<p class="sub">${esc(s.seed)}</p>` : ''}</div>`;
   const inner = s.mapa ? `<a class="link" href="#/seed/${esc(s.id)}">${head}</a>` : `<div class="link">${head}</div>`;
   return `<article class="card">${inner}
     <div class="tags">${tags.map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</div>
     <div class="foot"><div class="stats">
-      <div><span>Vila</span><strong>${fmtDist(villageDist(s))}</strong></div>
-      <div><span>Perto (até ${NEAR} m)</span><strong>${near(s).length}</strong></div></div>
+      <div class="lead"><span>Vila</span><strong>${fmtDist(villageDist(s))}</strong></div>
+      <div title="Estruturas e biomas a até ${NEAR} m do spawn"><span>Por perto</span><strong>${near(s).length}</strong></div></div>
       <button type="button" class="icon-btn" data-fav="${esc(s.seed)}" aria-pressed="${fav}" aria-label="${fav ? 'Tirar dos favoritos' : 'Marcar como favorita'}">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="${fav ? '#F2B33D' : 'none'}" stroke="#F2B33D" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3 6.4 20.2l1.1-6.2L3 9.6l6.2-.9Z"/></svg>
       </button></div></article>`;
@@ -133,7 +136,7 @@ function renderLibrary() {
   <div class="bar">
     <div class="chips" role="group" aria-label="Filtrar seeds">${defs.map(([id, nome, n]) => `<button type="button" class="chip" data-filter="${id}" aria-pressed="${state.filter === id}">${nome}<small>${n}</small></button>`).join('')}</div>
     <label class="sort">Ordenar por
-      <select id="sort">${[['vila', 'Vila mais perto de (0,0)'], ['achados', 'Mais achados'], ['recente', 'Mais recente']].map(([v, t]) => `<option value="${v}"${state.sort === v ? ' selected' : ''}>${t}</option>`).join('')}</select></label>
+      <select id="sort">${[['vila', 'Vila mais perto do spawn'], ['achados', 'Mais achados'], ['recente', 'Mais recente']].map(([v, t]) => `<option value="${v}"${state.sort === v ? ' selected' : ''}>${t}</option>`).join('')}</select></label>
   </div>
   ${list.length ? `<div class="grid">${list.map(card).join('')}</div>`
     : `<div class="empty">${all.length ? 'Nenhuma seed neste filtro.' : 'Ainda não há seeds. Rode <code>python seed_hunter.py</code> para gerar as primeiras.'}</div>`}
@@ -164,17 +167,26 @@ function renderInspector(id) {
   const places = found(s).map(([k, v]) => ({ key: k, nome: label(k)[0], tipo: label(k)[1], cor: label(k)[2], ...v }));
   let tab = places.some((p) => p.tipo === 'estrutura') ? 'estrutura' : 'bioma';
   let sel = null, view = { map: s.id, mode: 'perspective' }, noteOpen = false;
+  // painel recolhido: libera o mapa e o menu do proprio BlueMap (seletor de mapas, distancia de render...)
+  let collapsed = store.get('panel', false);
+  const setCollapsed = (v) => {
+    collapsed = v; store.set('panel', v);
+    $('.insp').classList.toggle('collapsed', v);
+    if (v) $('#expand').focus(); else $('#collapse').focus();
+  };
 
   const frameSrc = `../${mkHash(s.id, sp.x, sp.y, sp.z, 300, 'perspective')}`;
   const draw = () => {
     const list = places.filter((p) => p.tipo === tab).sort((a, b) => a.dist - b.dist);
     const n = (t) => places.filter((p) => p.tipo === t).length;
     const chosen = !!state.chosen[s.seed];
-    const outside = (p) => p.x != null && Math.max(Math.abs(p.x), Math.abs(p.z)) > s.raio;   // alem do que o Chunky gerou
+    const ctr = centerOf(s);
+    const outside = (p) => p.x != null && Math.max(Math.abs(p.x - ctr.x), Math.abs(p.z - ctr.z)) > s.raio;   // alem do que o Chunky gerou
     $('.side').innerHTML = `
     <div class="top">
-      <a class="back" href="#/"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>Biblioteca</a>
-      <div class="row"><div><h1 class="mono" style="font-size:16px">${esc(s.seed)}</h1></div>
+      <div class="row" style="align-items:center"><a class="back" href="#/"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>Biblioteca</a>
+        <button type="button" class="btn" id="collapse" aria-expanded="true" style="height:36px;padding:0 12px;font-size:13px">Recolher painel</button></div>
+      <div class="row"><div><h1>Seed <span class="mono" style="font-size:16px;font-weight:500">${esc(s.seed)}</span></h1></div>
         <button type="button" class="icon-btn" id="copy" aria-label="Copiar seed"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#C9D2DC" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg></button></div>
       <div class="boxes"><div class="box"><span>Spawn</span><b>${sp.x}, ${sp.y}, ${sp.z}</b></div>
         <div class="box"><span>Área</span><b>${s.raio * 2}×${s.raio * 2}</b></div>
@@ -184,11 +196,12 @@ function renderInspector(id) {
       <button type="button" class="tab" data-tab="estrutura" aria-pressed="${tab === 'estrutura'}">Estruturas <small>${n('estrutura')}</small></button>
       <button type="button" class="tab" data-tab="bioma" aria-pressed="${tab === 'bioma'}">Biomas <small>${n('bioma')}</small></button></div>
     <div class="places">${list.length ? list.map((p) => `<button type="button" class="place${outside(p) ? ' out' : ''}" data-place="${esc(p.key)}" aria-pressed="${sel === p.key}">
-        <i style="background:${p.cor}"></i><span class="t"><span>${esc(p.nome)}</span><small>${p.x != null ? `X ${p.x} · Y ${p.y ?? '~'} · Z ${p.z}` : 'sem coordenadas (rode de novo)'}</small>${outside(p) ? '<span class="out-tag">fora da área renderizada: o mapa está vazio ali</span>' : ''}</span><em>${p.dist} m</em></button>`).join('')
+        <i style="background:${p.cor}"></i><span class="t"><span>${esc(p.nome)}</span><small>${p.x != null ? `X ${p.x} · Y ${p.y ?? '~'} · Z ${p.z}` : 'sem coordenadas (rode de novo)'}</small>${outside(p) ? '<span class="out-tag" title="O mapa só cobre 480 blocos em volta do spawn: ali está vazio">fora da área gerada</span>' : ''}</span><em>${p.dist} m</em></button>`).join('')
       : '<div class="empty" style="padding:24px 12px">Nada deste tipo foi encontrado perto do spawn.</div>'}</div>
     ${noteOpen ? `<div class="note"><label class="sr" for="note">Anotação</label><textarea id="note" placeholder="Anotação sobre esta seed">${esc(state.notes[s.seed] || '')}</textarea></div>` : ''}
     <div class="acts"><button type="button" class="btn" id="noteBtn" aria-expanded="${noteOpen}">${state.notes[s.seed] ? 'Anotação ✎' : 'Anotar'}</button>
       <button type="button" class="btn primary" id="choose" aria-pressed="${chosen}">${chosen ? 'Escolhida ✓' : 'Escolher esta seed'}</button></div>`;
+    $('#collapse').onclick = () => setCollapsed(true);
     $('#copy').onclick = () => { try { navigator.clipboard.writeText(s.seed); } catch { /* sem clipboard */ } };
     document.querySelectorAll('[data-tab]').forEach((b) => (b.onclick = () => { tab = b.dataset.tab; draw(); }));
     document.querySelectorAll('[data-place]').forEach((b) => (b.onclick = () => {
@@ -216,10 +229,11 @@ function renderInspector(id) {
     }));
   };
 
-  $('#app').innerHTML = `<div class="insp"><iframe id="bm" title="Mapa 3D da seed" src="${frameSrc}"></iframe>
-    <aside class="side"></aside><div class="views" role="group" aria-label="Modo de visão"></div>
+  $('#app').innerHTML = `<div class="insp${collapsed ? ' collapsed' : ''}"><iframe id="bm" title="Mapa 3D da seed" src="${frameSrc}"></iframe>
+    <aside class="side"></aside><button type="button" class="btn expand" id="expand">Mostrar painel</button><div class="views" role="group" aria-label="Modo de visão"></div>
     <div class="cam"><div class="n" aria-hidden="true">N</div><div><small>Câmera</small><span id="camtxt">—</span></div></div></div>`;
   draw(); drawViews();
+  $('#expand').onclick = () => setCollapsed(false);
   clearInterval(poll);
   poll = setInterval(() => {   // le a camera do iframe (mesma origem): leitura e botoes de visao
     try {

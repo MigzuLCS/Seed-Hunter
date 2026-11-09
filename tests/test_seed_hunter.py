@@ -41,6 +41,13 @@ class PatchConfTests(unittest.TestCase):
         self.assertEqual(out, "# hires-slider-default: 1\nhires-slider-default: 500\nother: 5\n")
 
 
+class LocateCmdTests(unittest.TestCase):
+    def test_measured_from_spawn(self):
+        self.assertEqual(
+            sh.locate_cmd({"x": 96, "y": 145, "z": -32}, "structure #minecraft:village"),
+            "execute in minecraft:overworld positioned 96 145 -32 run locate structure #minecraft:village")
+
+
 class IndexTests(unittest.TestCase):
     def test_build_index(self):
         import json, tempfile

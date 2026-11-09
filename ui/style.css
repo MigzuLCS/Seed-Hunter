@@ -4,8 +4,13 @@
   --ok-bg:#173524; --ok:#8BE0A6; --bad-bg:#3A1C1C; --bad:#F5A5A0;
   --sans:Inter,system-ui,sans-serif; --display:'Space Grotesk',Inter,sans-serif; --mono:'JetBrains Mono',ui-monospace,monospace;
 }
-*{box-sizing:border-box}
+*{box-sizing:border-box;scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
+html{color-scheme:dark;accent-color:var(--accent)}
 html,body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans)}
+::selection{background:var(--accent);color:var(--accent-ink)}
+.mono,.stats strong,.box b,.place small,.place em,.cam span,.chip small,.tab small,.sub{font-variant-numeric:tabular-nums}
+.btn,.chip,.icon-btn,.view,.tab,.place,.card{transition:border-color .15s,background-color .15s,color .15s}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
 a{color:var(--accent)} a:hover{color:#FFD27A}
 button,select,input,textarea{font:inherit;color:inherit}
 button{cursor:pointer}
@@ -26,7 +31,14 @@ button{cursor:pointer}
 .search:focus-within{border-color:var(--accent)}
 .btn{height:44px;padding:0 18px;border-radius:10px;border:1px solid var(--line);background:var(--card);font-size:14px;font-weight:500}
 .btn.primary{background:var(--accent);color:var(--accent-ink);border:0;font-weight:600}
+.btn:hover{border-color:var(--line2);background:var(--chip)}
+.btn.primary:hover{background:#FFC857}
 .btn:disabled{opacity:.45;cursor:not-allowed}
+.chip:hover:not([aria-pressed=true]){border-color:var(--line2);color:var(--text)}
+.icon-btn:hover{border-color:var(--accent)}
+.view:hover:not(:disabled){border-color:var(--line2);background:rgba(35,43,54,.95)}
+.tab:hover:not([aria-pressed=true]){color:var(--text)}
+.card:hover{border-color:var(--line2)}
 .bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px}
 .chips{display:flex;flex-wrap:wrap;gap:8px}
 .chip{height:40px;padding:0 16px;border-radius:999px;font-size:14px;font-weight:500;border:1px solid var(--line);background:var(--card);color:var(--text2)}
@@ -41,9 +53,8 @@ button{cursor:pointer}
 .thumb{position:relative;height:170px;background:#16202B}
 .thumb canvas,.thumb .none{position:absolute;inset:0;width:100%;height:100%}
 .thumb .none{display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px;text-align:center;padding:16px}
-.pin{position:absolute;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;background:var(--accent);border:2px solid var(--accent-ink)}
-.tag-print{position:absolute;left:10px;top:10px;padding:3px 8px;border-radius:6px;background:rgba(15,19,24,.82);font:11px var(--mono)}
-.badge{position:absolute;right:10px;top:10px;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:600}
+.pin{position:absolute;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;background:var(--accent);border:2px solid var(--accent-ink);box-shadow:0 1px 4px rgba(0,0,0,.55)}
+.badge{position:absolute;right:10px;top:10px;padding:3px 8px;border-radius:6px;font-size:12px;font-weight:600}
 .badge.ok{background:var(--ok-bg);color:var(--ok)} .badge.bad{background:var(--bad-bg);color:var(--bad)}
 .card .head{padding:14px 16px 6px;display:flex;flex-direction:column;gap:4px}
 .card h2{margin:0;font:700 18px var(--display)}
@@ -51,9 +62,10 @@ button{cursor:pointer}
 .tags{padding:8px 16px 0;display:flex;flex-wrap:wrap;gap:6px}
 .tag{padding:4px 9px;border-radius:999px;background:var(--chip);color:var(--text2);font-size:12px}
 .card .foot{padding:14px 16px 16px;margin-top:auto;display:flex;align-items:center;justify-content:space-between;gap:12px}
-.stats{display:flex;gap:18px;font-size:12px;color:var(--muted)}
+.stats{display:flex;gap:20px;font-size:12px;color:var(--muted)}
 .stats div{display:flex;flex-direction:column;gap:2px}
 .stats strong{color:var(--text);font:500 13px var(--mono)}
+.stats .lead strong{font-size:18px;font-family:var(--display);font-weight:700;color:var(--accent)}
 .icon-btn{width:44px;height:44px;border-radius:10px;border:1px solid var(--line);background:var(--panel);display:flex;align-items:center;justify-content:center}
 .empty{padding:48px 0;text-align:center;color:var(--muted);line-height:1.6}
 .code{display:block;padding:12px 14px;border-radius:8px;background:var(--panel);border:1px solid var(--line);font:13px var(--mono);overflow-x:auto;white-space:pre}
@@ -68,7 +80,7 @@ button{cursor:pointer}
 .side .row{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
 .boxes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 .box{padding:10px;border-radius:10px;background:var(--card);display:flex;flex-direction:column;gap:3px}
-.box span{font-size:11px;color:var(--muted)} .box b{font:500 12px var(--mono)}
+.box span{font-size:12px;color:var(--muted)} .box b{font:500 12px var(--mono)}
 .tabs{padding:12px 20px 0;display:flex;gap:6px}
 .tab{flex:1;height:40px;border-radius:8px;font-size:14px;font-weight:500;border:1px solid transparent;background:transparent;color:var(--muted)}
 .tab[aria-pressed=true]{border-color:var(--line2);background:var(--chip);color:var(--text)}
@@ -85,17 +97,25 @@ button{cursor:pointer}
 .note{padding:0 20px 12px}
 .note textarea{width:100%;min-height:84px;resize:vertical;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--card);font-size:14px}
 .side .acts{padding:14px 20px;border-top:1px solid var(--line);display:flex;gap:8px}
-.side .acts .btn{flex:1}
-.views{position:absolute;top:16px;right:16px;display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;max-width:calc(100% - 420px)}
+.side .acts .btn{flex:1;white-space:nowrap}
+.side .acts #noteBtn{flex:0 0 auto;padding:0 16px}
+/* a barra de visoes e a camera ficam na area livre ao lado do painel: os controles do proprio BlueMap
+   (menu no canto superior esquerdo, zoom e bussola a direita) continuam livres */
+.expand{display:none;position:absolute;left:16px;top:64px;background:rgba(15,19,24,.88)}
+.insp.collapsed .side{display:none}
+.insp.collapsed .expand{display:block}
+.insp.collapsed .views{left:120px;max-width:calc(100% - 120px - 360px)}   /* depois do menu do BlueMap, que agora esta livre */
+.insp.collapsed .cam{left:16px}
+.views{position:absolute;top:16px;left:412px;display:flex;flex-wrap:wrap;gap:8px;max-width:calc(100% - 412px - 360px)}
 .view{height:44px;padding:0 16px;border-radius:10px;font-size:14px;border:1px solid var(--line);background:rgba(15,19,24,.88)}
 .view:disabled{opacity:.45;cursor:not-allowed}
 .place.out i{opacity:.4} .place.out .t span{color:var(--text2)}
-.place .out-tag{font:11px var(--mono);color:var(--muted)}
+.place .out-tag{font:12px var(--sans);color:var(--muted)}
 .view[aria-pressed=true]{border-color:var(--accent);background:rgba(42,38,24,.95)}
 .views a.btn{display:flex;align-items:center;text-decoration:none;background:var(--accent);color:var(--accent-ink);border:0;font-weight:600}
-.cam{position:absolute;right:16px;bottom:16px;display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:12px;background:rgba(15,19,24,.88);border:1px solid var(--line)}
+.cam{position:absolute;left:412px;bottom:16px;display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:12px;background:rgba(15,19,24,.88);border:1px solid var(--line)}
 .cam .n{width:40px;height:40px;border-radius:50%;border:1px solid var(--line2);display:flex;align-items:center;justify-content:center;font:700 14px var(--display);color:var(--accent)}
-.cam small{display:block;font-size:11px;color:var(--muted)} .cam span{font:13px var(--mono)}
+.cam small{display:block;font-size:12px;color:var(--muted)} .cam span{font:13px var(--mono)}
 dialog{background:var(--panel);color:var(--text);border:1px solid var(--line2);border-radius:16px;padding:24px;max-width:560px;width:calc(100% - 32px)}
 dialog::backdrop{background:rgba(0,0,0,.6)}
 dialog h2{margin:0 0 8px;font:700 20px var(--display)} dialog p{color:var(--text2);line-height:1.55}
@@ -103,7 +123,13 @@ dialog .acts{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
 
 @media (max-width:820px){
   .lib{padding:20px 16px 48px}
-  .side{top:auto;height:55%;width:calc(100% - 32px)}
-  .views{max-width:calc(100% - 32px);top:8px;right:16px}
+  .search{min-width:0;flex:1}
+  .tools{width:100%}
+  .side{top:auto;height:62%;width:calc(100% - 32px)}
+  .side .top{padding:12px 16px;gap:8px}
+  .boxes .box:nth-child(n+2){display:none}      /* no celular o painel guarda o espaco para a lista: so o spawn */
+  .boxes{grid-template-columns:1fr}
+  .views,.insp.collapsed .views{left:16px;top:60px;max-width:calc(100% - 32px)}   /* abaixo da barra do BlueMap */
+  .expand{top:auto;bottom:16px}
   .cam{display:none}
 }

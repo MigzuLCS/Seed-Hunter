@@ -2,7 +2,7 @@
 
 > Projeto pessoal em andamento. Funciona na minha máquina; espere arestas.
 
-Transforma uma lista de seeds de Minecraft Java em mapas 3D navegáveis no navegador, sem abrir o jogo. Para cada seed ele filtra com `/locate`, pré-gera 30 chunks (480 blocos) em volta de (0,0) e renderiza com o BlueMap. Você deixa rodando e volta para comparar.
+Transforma uma lista de seeds de Minecraft Java em mapas 3D navegáveis no navegador, sem abrir o jogo. Para cada seed ele filtra com `/locate`, pré-gera 30 chunks (480 blocos) em volta do spawn e renderiza com o BlueMap. Você deixa rodando e volta para comparar.
 
 ```
 seeds.txt -> Paper headless -> /locate (filtro) -> Chunky (pré-gera) -> BlueMap CLI -> http://localhost:8100
@@ -42,7 +42,7 @@ python seed_hunter.py --rule "structure #minecraft:village=800" --rule "biome mi
 Para ver os resultados: `cd bluemap && java -jar bluemap-cli.jar -w` e abra **http://localhost:8100/ui/**.
 
 - **Biblioteca:** miniatura vista de cima de cada seed, tags dos achados, favoritas, filtros e busca.
-- **Inspetor:** mapa 3D com menu lateral de estruturas e biomas (clique para voar até o local), modos Perspectiva e Vista de cima, anotações e "Escolher esta seed".
+- **Inspetor:** mapa 3D com menu lateral de estruturas e biomas (clique para voar até o local), modos Perspectiva e Vista de cima, anotações e "Escolher esta seed". "Recolher painel" libera o mapa e o menu do próprio BlueMap (seletor de mapas, distância de render).
 - Favoritos, anotações e escolhidas ficam no `localStorage` do navegador.
 - O mapa puro do BlueMap continua em http://localhost:8100 (o botão "Abrir no BlueMap" leva para lá).
 
@@ -60,8 +60,8 @@ O botão "Cavernas" do inspetor só fica ativo nas seeds que já têm esse mapa.
 
 ## O que ele faz por seed
 
-1. Sobe o Paper com a seed e roda cada regra de `LOCATE_RULES` medindo a distância a partir de **(0,0)** (não do spawn). Falhou, a seed é `reprovada` em menos de um minuto.
-2. Passou: Chunky pré-gera um quadrado de raio 480 centrado em (0,0).
+1. Sobe o Paper com a seed e roda cada regra de `LOCATE_RULES` medindo a distância a partir do **spawn** (o mesmo centro da área gerada). Falhou, a seed é `reprovada` em menos de um minuto.
+2. Passou: Chunky pré-gera um quadrado de raio 480 centrado no spawn.
 3. BlueMap renderiza o mapa e grava marcadores de spawn e achados.
 4. O resultado vai para `resultados.csv`. Seeds `ok` e `reprovada` são puladas na próxima rodada; falhas são tentadas de novo, então pode interromper e continuar.
 

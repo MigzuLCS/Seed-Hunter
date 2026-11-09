@@ -2,7 +2,7 @@
 """seed_hunter.py - preview 3D de varias seeds de Minecraft Java.
 
 Paper + Chunky + BlueMap CLI. So biblioteca padrao do Python 3.10+.
-Fluxo por seed: sobe o Paper -> filtra com /locate (centrado em 0,0) ->
+Fluxo por seed: sobe o Paper -> filtra com /locate (medido do spawn) ->
 pre-gera com Chunky -> renderiza no BlueMap com marcadores nativos.
 O resultados.csv e a fonte da verdade para retomar de onde parou.
 """
@@ -23,8 +23,8 @@ BLUEMAP_JAR = "bluemap-cli.jar"
 SERVER_RAM = "4G"
 BLUEMAP_RAM = "4G"
 
-RADIUS = 480                        # blocos em volta de (0,0): 30 chunks
-# Regras do filtro: (alvo do /locate, distancia maxima de (0,0) em blocos).
+RADIUS = 480                        # blocos em volta do spawn: 30 chunks
+# Regras do filtro: (alvo do /locate, distancia maxima do SPAWN em blocos).
 # Alvo = "structure <id>" ou "biome <id>". Lista vazia = sem filtro.
 LOCATE_RULES = [
     ("structure #minecraft:village", 480),
@@ -46,7 +46,6 @@ INFO_TARGETS = [
     "biome minecraft:mushroom_fields",
     "biome minecraft:ice_spikes",
 ]
-ORIGIN = "execute in minecraft:overworld positioned 0 64 0 run locate "
 UI_DIR = BASE / "ui"                # fonte da interface (copiada para bluemap/web/ui/)
 WEB_UI = BLUEMAP_DIR / "web" / "ui"
 CAVE_SUFFIX = "_cav"                # mapa extra com cavernas abertas, gerado sob demanda
@@ -241,9 +240,14 @@ def done_seeds():
         return {r["seed"] for r in csv.DictReader(f, delimiter=";") if r.get("status") in STATUS_FINAL}
 
 
-def locate_one(srv, target, timeout=180):
+def locate_cmd(spawn, target):
+    """/locate medido a partir do spawn (o centro da area que o Chunky gera)."""
+    return f"execute in minecraft:overworld positioned {spawn['x']} {spawn['y']} {spawn['z']} run locate {target}"
+
+
+def locate_one(srv, spawn, target, timeout=180):
     """Roda um /locate e devolve dict(x,y,z,dist), None (nao achou) ou levanta ValueError (saida inesperada)."""
-    srv.send(ORIGIN + target)
+    srv.send(locate_cmd(spawn, target))
     line = srv.wait_for(r"blocks away\)|Could not find|Unknown|Invalid", timeout)
     hit = parse_locate(line) if line else None
     if line and not hit and not LOCATE_FAIL.search(line):
@@ -259,25 +263,28 @@ def generate(seed, level, rules, radius, verbose, info=True):
         if not srv.wait_for(r"Done \(.*\)! For help", 300):
             return "falha ao iniciar", {}, None
         hits = {}
+        # O console roda no spawn real; setworldspawn ~ ~ ~ o repete (sem mudar nada) e imprime as coordenadas.
+        srv.send("execute in minecraft:overworld run setworldspawn ~ ~ ~")
+        spawn = parse_spawn(srv.wait_for(r"world spawn point", 30) or "")
+        if spawn is None:
+            return "falha ao ler o spawn", hits, None
         for target, max_dist in rules:
             try:
-                hit = locate_one(srv, target)
+                hit = locate_one(srv, spawn, target)
             except ValueError as e:
-                return f"locate inesperado: {e}", hits, None
+                return f"locate inesperado: {e}", hits, spawn
             hits[target] = hit
             if hit is None or hit["dist"] > max_dist:
-                return "reprovada", hits, None
+                return "reprovada", hits, spawn
         if info:
             for target in INFO_TARGETS:
                 if target in hits:
                     continue
                 try:
-                    hits[target] = locate_one(srv, target, 60)
+                    hits[target] = locate_one(srv, spawn, target, 60)
                 except ValueError:
                     hits[target] = None      # id desconhecido nesta versao: ignora
-        srv.send("execute in minecraft:overworld run setworldspawn ~ ~ ~")   # repete o spawn atual so para le-lo
-        spawn = parse_spawn(srv.wait_for(r"world spawn point", 30) or "")
-        for cmd in (f"chunky world {level}", "chunky center 0 0", "chunky shape square",
+        for cmd in (f"chunky world {level}", f"chunky center {spawn['x']} {spawn['z']}", "chunky shape square",
                     f"chunky radius {radius}", "chunky start"):
             srv.send(cmd)
             time.sleep(1)
@@ -334,7 +341,7 @@ def process(seed, index, rules, radius, verbose, info=True):
 def save_seed(seed, status, hits, spawn, mins, radius):
     """Um JSON por seed (inclusive reprovadas): a interface le tudo daqui via index.json."""
     level = safe_id(seed)
-    data = {"seed": seed, "id": level, "status": status, "spawn": spawn, "achados": hits,
+    data = {"seed": seed, "id": level, "status": status, "spawn": spawn, "centro": spawn, "achados": hits,
             "minutos": round(mins, 1), "raio": radius, "quando": time.strftime("%Y-%m-%dT%H:%M:%S")}
     (DATA_DIR / f"{level}.json").write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
@@ -362,7 +369,7 @@ def build_index():
         has_map = (BLUEMAP_DIR / "web" / "maps" / level).exists() and r["status"] == "ok"
         seeds.append({
             "seed": seed, "id": level, "status": r["status"], "minutos": float(r["minutos"] or 0),
-            "spawn": extra.get("spawn"), "achados": achados, "raio": extra.get("raio", RADIUS),
+            "spawn": extra.get("spawn"), "centro": extra.get("centro"), "achados": achados, "raio": extra.get("raio", RADIUS),
             "quando": extra.get("quando"), "mapa": has_map,
             "cavernas": has_map and (BLUEMAP_DIR / "web" / "maps" / (level + CAVE_SUFFIX)).exists(),
         })

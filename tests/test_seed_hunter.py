@@ -96,22 +96,36 @@ class PlayWorldTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
             world = d / "worlds" / "seed_n42"
-            (world / "dimensions").mkdir(parents=True)
+            ow = world / "dimensions" / "minecraft" / "overworld" / "data" / "minecraft"
+            ow.mkdir(parents=True)                                       # layout do Paper: .dat dentro da dimensao
+            for n in ("world_gen_settings.dat", "game_rules.dat", "weather.dat", "scheduled_events.dat"):
+                (ow / n).write_text("paper-" + n)
+            (world / "data" / "minecraft").mkdir(parents=True)
+            (world / "data" / "minecraft" / "scoreboard.dat").write_text("sb")
             (world / "level.dat").write_text("x"); (world / "session.lock").write_text("lock")
             saves = d / "saves"; saves.mkdir()
             old = sh.WORLDS_DIR; sh.WORLDS_DIR = d / "worlds"
             try:
-                dst, copied = sh.play_world("-42", saves)
-                self.assertTrue(copied)
+                dst, action = sh.play_world("-42", saves)
+                self.assertEqual(action, "copiado")
                 self.assertEqual(dst.name, "SeedHunter_n42")
                 self.assertTrue((dst / "level.dat").exists())
                 self.assertFalse((dst / "session.lock").exists())
+                # o jogo le os .dat globais da raiz: sem world_gen_settings.dat falha com "Overworld settings missing"
+                for n in ("world_gen_settings.dat", "game_rules.dat", "weather.dat", "scheduled_events.dat"):
+                    self.assertTrue((dst / "data" / "minecraft" / n).exists(), n)
                 (dst / "progresso.txt").write_text("jogador")            # o jogador mexeu no mundo
-                dst2, copied2 = sh.play_world("-42", saves)              # segunda chamada nao sobrescreve
-                self.assertFalse(copied2)
-                self.assertTrue((dst2 / "progresso.txt").exists())
-                _, copied3 = sh.play_world("-42", saves, force=True)     # --forcar recopia
-                self.assertTrue(copied3)
+                (dst / "data" / "minecraft" / "game_rules.dat").write_text("do-jogador")
+                _, action2 = sh.play_world("-42", saves)                 # segunda chamada nao sobrescreve
+                self.assertEqual(action2, "existente")
+                self.assertTrue((dst / "progresso.txt").exists())
+                (dst / "data" / "minecraft" / "weather.dat").unlink()    # mundo copiado pela versao antiga do script
+                _, action3 = sh.play_world("-42", saves)
+                self.assertEqual(action3, "reparado")
+                self.assertTrue((dst / "data" / "minecraft" / "weather.dat").exists())
+                self.assertEqual((dst / "data" / "minecraft" / "game_rules.dat").read_text(), "do-jogador")   # nao sobrescreve
+                _, action4 = sh.play_world("-42", saves, force=True)     # --forcar recopia
+                self.assertEqual(action4, "copiado")
                 self.assertFalse((dst / "progresso.txt").exists())
                 with self.assertRaises(FileNotFoundError):
                     sh.play_world("999", saves)                          # seed sem mundo

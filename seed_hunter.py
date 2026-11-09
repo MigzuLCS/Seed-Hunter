@@ -418,9 +418,29 @@ def default_saves():
     return base / "saves"
 
 
+# O Paper 26.x guarda estes dados globais dentro da dimensao (dimensions/minecraft/overworld/data/minecraft/),
+# mas o jogo os le da raiz do mundo (data/minecraft/). Sem eles o jogo falha com "Overworld settings missing".
+PAPER_TO_ROOT = ("world_gen_settings.dat", "game_rules.dat", "weather.dat", "scheduled_events.dat")
+
+
+def adapt_for_vanilla(world):
+    """Leva os .dat globais do overworld para a raiz do mundo, so quando faltam (nunca sobrescreve).
+    Devolve quantos arquivos foram adicionados."""
+    ow = Path(world) / "dimensions" / "minecraft" / "overworld" / "data" / "minecraft"
+    root = Path(world) / "data" / "minecraft"
+    added = 0
+    for name in PAPER_TO_ROOT:
+        if (ow / name).exists() and not (root / name).exists():
+            root.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ow / name, root / name)
+            added += 1
+    return added
+
+
 def play_world(seed, saves, force=False):
-    """Copia o mundo pre-gerado de uma seed para a pasta saves do Minecraft e devolve o destino.
-    O formato do Paper 26.x e o mesmo do jogo; fora da area gerada o jogo continua gerando normalmente."""
+    """Copia o mundo pre-gerado de uma seed para a pasta saves do Minecraft e devolve (destino, acao).
+    acao: "copiado", "reparado" (ja existia e faltavam .dat do jogo) ou "existente".
+    Fora da area gerada o jogo continua gerando o mesmo terreno."""
     level = safe_id(seed)
     src = WORLDS_DIR / level
     if not src.exists():
@@ -428,10 +448,12 @@ def play_world(seed, saves, force=False):
     dst = Path(saves) / ("SeedHunter_" + level[len("seed_"):])
     if dst.exists():
         if not force:
-            return dst, False                      # ja copiado: nao sobrescreve o progresso do jogador
+            # nao sobrescreve o progresso do jogador; so completa o que o jogo precisa e faltava
+            return dst, ("reparado" if adapt_for_vanilla(dst) else "existente")
         shutil.rmtree(dst)
     shutil.copytree(src, dst, ignore=shutil.ignore_patterns("session.lock"))
-    return dst, True
+    adapt_for_vanilla(dst)
+    return dst, "copiado"
 
 
 def run_seeds(seeds, rules, radius, verbose, info, limit, log):
@@ -515,12 +537,15 @@ def main():
         saves = Path(args.saves) if args.saves else default_saves()
         for s in args.jogar:
             try:
-                dst, copied = play_world(s, saves, args.forcar)
+                dst, action = play_world(s, saves, args.forcar)
             except FileNotFoundError as e:
                 print(e)
                 continue
-            print(f"{s}: {'copiado para' if copied else 'ja existe em'} {dst}" + ("" if copied else "  (use --forcar para recopiar; apaga o progresso)"))
-        print("No Minecraft 26.3: Um jogador > procure o mundo SeedHunter_<seed>.")
+            msg = {"copiado": "copiado para", "reparado": "ja existia; completei os arquivos que o jogo precisa em",
+                   "existente": "ja existe em"}[action]
+            print(f"{s}: {msg} {dst}" + ("  (--forcar recopia e apaga o progresso)" if action == "existente" else ""))
+            # o jogo lista o nome do level.dat ("seed_...") e, abaixo dele, o nome da pasta
+            print(f"   No Minecraft 26.3: Um jogador > entrada com a pasta '{dst.name}' (o titulo mostrado e '{safe_id(s)}').")
         return
 
     rules = LOCATE_RULES if args.rule is None else [parse_rule(r) for r in args.rule if not r.startswith("none")]

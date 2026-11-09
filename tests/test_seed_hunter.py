@@ -44,16 +44,18 @@ class PatchConfTests(unittest.TestCase):
 class PipelineTests(unittest.TestCase):
     """run_seeds com prepare/render falsos: ordem, sobreposicao e destino de cada status."""
 
-    def run_fake(self, statuses, render_results):
+    def run_fake(self, statuses, render_results, centros=None):
         import io, threading, time
         events, lock = [], threading.Lock()
         live = {"n": 0, "max": 0}
+        self.centers_seen, self.saved = {}, {}
 
         def log_ev(*e):
             with lock:
                 events.append((time.time(),) + e)
 
-        def fake_prepare(seed, rules, radius, verbose, info=True, anel_min=None):
+        def fake_prepare(seed, rules, radius, verbose, info=True, anel_min=None, center=None):
+            self.centers_seen[seed] = center
             log_ev("prep_start", seed); time.sleep(0.2); log_ev("prep_end", seed)
             return statuses[seed], {}, {"x": 0, "y": 64, "z": 0}, None
 
@@ -69,11 +71,14 @@ class PipelineTests(unittest.TestCase):
             return r
 
         saved = (sh.prepare, sh.render, sh.save_seed, sh.build_index, sh.done_seeds)
-        sh.prepare, sh.render, sh.save_seed = fake_prepare, fake_render, lambda *a, **k: None
+        def fake_save(seed, status, hits, spawn, mins, radius, centro=None, triagem=None):
+            self.saved[seed] = (centro, triagem)
+
+        sh.prepare, sh.render, sh.save_seed = fake_prepare, fake_render, fake_save
         sh.build_index, sh.done_seeds = lambda: 0, lambda: set()
         buf = io.StringIO()
         try:
-            sh.run_seeds(list(statuses), [], 480, False, False, 0, buf)
+            sh.run_seeds(list(statuses), [], 480, False, False, 0, buf, None, centros)
         finally:
             sh.prepare, sh.render, sh.save_seed, sh.build_index, sh.done_seeds = saved
         rows = {l.split(";")[0]: l.split(";")[1] for l in buf.getvalue().splitlines()}
@@ -106,7 +111,7 @@ class FunnelTests(unittest.TestCase):
         self.rendered = []
         self.orig = (sh.generate, sh.terrain.analyze_world, sh.render)
 
-        def fake_generate(seed, level, rules, radius, verbose, info=True):
+        def fake_generate(seed, level, rules, radius, verbose, info=True, center=None):
             (sh.SERVER_DIR / level).mkdir()
             return "ok", {"structure #minecraft:village": {"x": 1, "y": None, "z": 2, "dist": 5}}, {"x": 0, "y": 64, "z": 0}
 
@@ -212,6 +217,23 @@ class PlayWorldTests(unittest.TestCase):
                     sh.play_world("999", saves)                          # seed sem mundo
             finally:
                 sh.WORLDS_DIR = old
+
+
+class RingCenterTests(unittest.TestCase):
+    def test_chunky_commands_use_given_center(self):
+        cmds = sh.chunky_commands("seed_1", {"x": 276, "z": -152}, 480)
+        self.assertEqual(cmds, ("chunky world seed_1", "chunky center 276 -152", "chunky shape square",
+                                "chunky radius 480", "chunky start"))
+
+    def test_pipeline_passes_ring_center_and_saves_triage(self):
+        tri = {"seed": "1", "score": 0.55, "neve": 0.9, "raio": 120, "x": 276, "z": -152}
+        p = PipelineTests()
+        statuses = {"1": "candidata", "2": "sem relevo"}
+        p.run_fake(statuses, {}, centros={"1": tri})
+        self.assertEqual(p.centers_seen["1"], {"x": 276, "z": -152})      # o Chunky gera em volta do anel
+        self.assertIsNone(p.centers_seen["2"])                              # sem triagem: usa o spawn
+        self.assertEqual(p.saved["1"], ({"x": 276, "z": -152}, tri))        # centro e triagem ficam gravados
+        self.assertEqual(p.saved["2"], (None, None))
 
 
 class LocateCmdTests(unittest.TestCase):

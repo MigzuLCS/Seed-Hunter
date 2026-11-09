@@ -10,3 +10,5 @@ seeds.txt
 __pycache__/
 resultados/
 referencia/
+native/build/
+native/*.dll

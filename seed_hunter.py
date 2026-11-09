@@ -272,7 +272,14 @@ def locate_one(srv, spawn, target, timeout=180):
     return hit
 
 
-def generate(seed, level, rules, radius, verbose, info=True):
+def chunky_commands(level, center, radius):
+    """Comandos do Chunky para gerar um quadrado de `radius` blocos em volta de `center` ({"x":..,"z":..}).
+    O centro e o spawn, ou o centro do anel quando a triagem do cubiomes achou um."""
+    return (f"chunky world {level}", f"chunky center {center['x']} {center['z']}", "chunky shape square",
+            f"chunky radius {radius}", "chunky start")
+
+
+def generate(seed, level, rules, radius, verbose, info=True, center=None):
     """Retorna (status, achados, spawn). O mundo fica em server/<level>."""
     set_props({"level-seed": seed, "level-name": level, "sync-chunk-writes": "false"})
     srv = Server(verbose)
@@ -301,8 +308,7 @@ def generate(seed, level, rules, radius, verbose, info=True):
                     hits[target] = locate_one(srv, spawn, target, 60)
                 except ValueError:
                     hits[target] = None      # id desconhecido nesta versao: ignora
-        for cmd in (f"chunky world {level}", f"chunky center {spawn['x']} {spawn['z']}", "chunky shape square",
-                    f"chunky radius {radius}", "chunky start"):
+        for cmd in chunky_commands(level, center or spawn, radius):
             srv.send(cmd)
             time.sleep(1)
         if not srv.wait_for(r"Task finished", 3600):
@@ -334,7 +340,7 @@ def render(seed, level, sorting, spawn, hits):
     return r.returncode == 0
 
 
-def prepare(seed, rules, radius, verbose, info=True, anel_min=None):
+def prepare(seed, rules, radius, verbose, info=True, anel_min=None, center=None):
     """Filtra e gera uma seed e deixa o mundo pronto em worlds/<level>. Nao renderiza.
     Devolve (status, achados, spawn, relevo). Sem funil (anel_min None): "ok" = pronta para o BlueMap.
     Com funil: mede o relevo; abaixo de anel_min o mundo e apagado ("sem relevo"), acima vira "candidata"
@@ -342,7 +348,7 @@ def prepare(seed, rules, radius, verbose, info=True, anel_min=None):
     level = safe_id(seed)
     shutil.rmtree(SERVER_DIR / level, ignore_errors=True)      # restos de uma rodada interrompida
     shutil.rmtree(WORLDS_DIR / level, ignore_errors=True)
-    status, hits, spawn = generate(seed, level, rules, radius, verbose, info)
+    status, hits, spawn = generate(seed, level, rules, radius, verbose, info, center)
     src = SERVER_DIR / level
     if status == "ok" and not src.exists():
         status = "mundo nao encontrado"
@@ -365,11 +371,13 @@ def prepare(seed, rules, radius, verbose, info=True, anel_min=None):
     return "candidata", hits, spawn, relevo
 
 
-def save_seed(seed, status, hits, spawn, mins, radius):
-    """Um JSON por seed (inclusive reprovadas): a interface le tudo daqui via index.json."""
+def save_seed(seed, status, hits, spawn, mins, radius, centro=None, triagem=None):
+    """Um JSON por seed (inclusive reprovadas): a interface le tudo daqui via index.json.
+    centro = centro da area gerada (o spawn, ou o centro do anel quando a triagem do cubiomes achou um);
+    triagem = resultado da etapa 0 (score so-cubiomes, centro e raio do anel estimados)."""
     level = safe_id(seed)
-    data = {"seed": seed, "id": level, "status": status, "spawn": spawn, "centro": spawn, "achados": hits,
-            "minutos": round(mins, 1), "raio": radius, "quando": time.strftime("%Y-%m-%dT%H:%M:%S")}
+    data = {"seed": seed, "id": level, "status": status, "spawn": spawn, "centro": centro or spawn, "achados": hits,
+            "triagem": triagem, "minutos": round(mins, 1), "raio": radius, "quando": time.strftime("%Y-%m-%dT%H:%M:%S")}
     (DATA_DIR / f"{level}.json").write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
@@ -420,7 +428,7 @@ def build_index():
             "spawn": extra.get("spawn"), "centro": extra.get("centro"), "achados": achados, "raio": extra.get("raio", RADIUS),
             "quando": extra.get("quando"), "mapa": has_map,
             "cavernas": has_map and (BLUEMAP_DIR / "web" / "maps" / (level + CAVE_SUFFIX)).exists(),
-            "relevo": relevo, "juiz": juiz.get(seed), "imagem": has_img,
+            "relevo": relevo, "juiz": juiz.get(seed), "imagem": has_img, "triagem": extra.get("triagem"),
         })
     WEB_UI.mkdir(parents=True, exist_ok=True)
     (WEB_UI / "index.json").write_text(json.dumps(
@@ -507,10 +515,10 @@ def read_rows():
     return rows
 
 
-def write_row(seed, status, hits, spawn, mins, radius):
+def write_row(seed, status, hits, spawn, mins, radius, centro=None, triagem=None):
     """Registra o resultado de uma seed fora da rodada principal (aprovacao do juiz): JSON, CSV e index.json."""
     brief = {k.split()[-1]: (v["dist"] if v else None) for k, v in hits.items()}
-    save_seed(seed, status, hits, spawn, mins, radius)
+    save_seed(seed, status, hits, spawn, mins, radius, centro, triagem)
     new = not RESULTS.exists()
     with RESULTS.open("a", encoding="utf-8", newline="") as f:
         w = csv.writer(f, delimiter=";")
@@ -579,38 +587,40 @@ def aprovar(nota_min=JUIZ_NOTA_MIN, radius=RADIUS):
             shutil.rmtree(WORLDS_DIR / level, ignore_errors=True)
             status = "descartada"
         feitos[status] += 1
-        write_row(seed, status, hits, spawn, mins, radius)
+        write_row(seed, status, hits, spawn, mins, radius, info.get("centro"), info.get("triagem"))
     return feitos
 
 
-def run_seeds(seeds, rules, radius, verbose, info, limit, log, anel_min=None):
+def run_seeds(seeds, rules, radius, verbose, info, limit, log, anel_min=None, centros=None):
     """Pipeline com sobreposicao: enquanto o BlueMap renderiza a seed N, o Paper ja filtra/gera a N+1.
-    Um render por vez (o proximo espera o anterior), e seeds reprovadas nunca vao para o BlueMap."""
+    Um render por vez (o proximo espera o anterior), e seeds reprovadas nunca vao para o BlueMap.
+    centros: {seed: resultado da triagem} - o Chunky gera em volta do centro do anel em vez do spawn."""
     done = done_seeds()
     w = csv.writer(log, delimiter=";")
     pool = ThreadPoolExecutor(max_workers=1)
-    pending = None                       # (future, seed, hits, spawn, t0) da seed que esta renderizando
+    pending = None                       # (future, seed, hits, spawn, t0, triagem) da seed que esta renderizando
     ran, t_start = 0, time.time()
+    centros = centros or {}
 
-    def record(seed, status, hits, spawn, t0):
+    def record(seed, status, hits, spawn, t0, tri=None):
         mins = (time.time() - t0) / 60   # com a sobreposicao, o tempo de uma seed inclui o que correu junto
         brief = {k.split()[-1]: (v["dist"] if v else None) for k, v in hits.items()}
         print(f"   -> {seed}: {status} {brief} ({mins:.1f} min)", flush=True)
-        save_seed(seed, status, hits, spawn, mins, radius)
+        save_seed(seed, status, hits, spawn, mins, radius, {"x": tri["x"], "z": tri["z"]} if tri else None, tri)
         w.writerow([seed, status, json.dumps(brief), f"{mins:.1f}"])
         log.flush()
         build_index()
 
     def finish():
         nonlocal pending
-        fut, seed, hits, spawn, t0 = pending
+        fut, seed, hits, spawn, t0, tri = pending
         pending = None
         try:
             ok = fut.result()
         except Exception as e:           # um render quebrado nao derruba a rodada
             print(f"   render falhou: {e}")
             ok = False
-        record(seed, "ok" if ok else "falha no bluemap", hits, spawn, t0)
+        record(seed, "ok" if ok else "falha no bluemap", hits, spawn, t0, tri)
 
     try:
         for i, seed in enumerate(seeds, 1):
@@ -624,16 +634,19 @@ def run_seeds(seeds, rules, radius, verbose, info, limit, log, anel_min=None):
             ran += 1
             t0 = time.time()
             print(f"[{i}/{len(seeds)}] {seed}: gerando...", flush=True)
-            status, hits, spawn, relevo = prepare(seed, rules, radius, verbose, info, anel_min)
+            tri = centros.get(seed)
+            status, hits, spawn, relevo = prepare(seed, rules, radius, verbose, info, anel_min,
+                                                  {"x": tri["x"], "z": tri["z"]} if tri else None)
             if relevo:
-                print(f"   relevo: anel {relevo['score']} (neve {relevo.get('neve', '-')})", flush=True)
+                est = f" (cubiomes previu {tri['score']})" if tri else ""
+                print(f"   relevo: anel {relevo['score']} (neve {relevo.get('neve', '-')}){est}", flush=True)
             if status == "ok":
                 if pending:
                     finish()             # so um render por vez: espera o anterior
                 print(f"   {seed}: renderizando 3D em segundo plano...", flush=True)
-                pending = (pool.submit(render, seed, safe_id(seed), i, spawn, hits), seed, hits, spawn, t0)
+                pending = (pool.submit(render, seed, safe_id(seed), i, spawn, hits), seed, hits, spawn, t0, tri)
             else:
-                record(seed, status, hits, spawn, t0)
+                record(seed, status, hits, spawn, t0, tri)
     finally:
         if pending:
             finish()
@@ -660,6 +673,12 @@ def main():
     ap.add_argument("--anel-min", type=float, default=ANEL_MIN, metavar="F",
                     help="funil de relevo: score minimo (0-1) para virar candidata (padrao %(default)s)")
     ap.add_argument("--sem-anel", action="store_true", help="desliga o funil de relevo: toda seed gerada vai direto ao BlueMap")
+    ap.add_argument("--garimpar", type=int, metavar="N",
+                    help="etapa 0: avalia o anel de muitas seeds so com o cubiomes (sem gerar) e leva as N melhores ao servidor")
+    ap.add_argument("--amostra", type=int, metavar="M", help="com --garimpar: quantas seeds aleatorias avaliar (padrao 60*N)")
+    ap.add_argument("--triagem-min", type=float, default=None, metavar="F",
+                    help="com --garimpar: score minimo so-cubiomes (padrao triagem.TRIAGEM_MIN = 0,4)")
+    ap.add_argument("--workers", type=int, default=8, help="com --garimpar: processos em paralelo (padrao %(default)s)")
     ap.add_argument("--juiz-preparar", action="store_true",
                     help="monta lotes de imagens (nomes embaralhados) das candidatas sem nota, para o juiz")
     ap.add_argument("--juiz-aplicar", nargs=2, metavar=("RESPOSTA.json", "LOTE"),
@@ -708,13 +727,26 @@ def main():
             make_caves(args.cavernas)
         print(f"index.json: {build_index()} seeds")
         return
-    seeds = load_seeds(args.random)
+    centros = None
+    if args.garimpar:
+        import triagem                          # so aqui: precisa da DLL do cubiomes (native/build.ps1)
+        picks = triagem.screen(args.amostra or 60 * args.garimpar, args.garimpar,
+                               args.triagem_min if args.triagem_min is not None else triagem.TRIAGEM_MIN, args.workers)
+        if not picks:
+            print("Nenhuma seed passou na triagem: aumente --amostra ou baixe --triagem-min.")
+            return
+        seeds = [str(p["seed"]) for p in picks]
+        centros = {str(p["seed"]): p for p in picks}
+        for p in picks:
+            print(f"   {p['seed']}: score {p['score']} (neve {p['neve']}), anel perto de ({p['x']}, {p['z']}), raio ~{p['raio']}")
+    else:
+        seeds = load_seeds(args.random)
     new_file = not RESULTS.exists()
     with RESULTS.open("a", encoding="utf-8", newline="") as log:
         if new_file:
             csv.writer(log, delimiter=";").writerow(["seed", "status", "achados", "minutos"])
         run_seeds(seeds, rules, args.radius, args.verbose, not args.sem_achados, args.limit, log,
-                  None if args.sem_anel else args.anel_min)
+                  None if args.sem_anel else args.anel_min, centros)
     print("Interface: http://localhost:8100/ui/  (servir: cd bluemap && java -jar bluemap-cli.jar -w; reinicie-o se ja estava ligado)")
 
 

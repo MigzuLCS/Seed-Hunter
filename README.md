@@ -67,6 +67,31 @@ python seed_hunter.py --aprovar              # passo 4
 
 As imagens vão sem o score nem a seed, para o juiz não ser influenciado. Na biblioteca, as candidatas aparecem com a imagem de relevo e a nota; "Neve" vira tag. `--sem-anel` desliga o funil (toda seed gerada vai direto ao BlueMap).
 
+### Triagem sem gerar o mundo (Cubiomes, experimental)
+
+O [fork `xpple/cubiomes`](https://github.com/xpple/cubiomes) (MIT) calcula biomas e uma estimativa de altura direto da seed, sem gerar chunks, e já suporta a 26.3. Medido contra os mundos reais do Paper: **99,95% dos biomas iguais** (1,07 milhão de células, 18 mundos) e altura com correlação 0,96. O score de anel calculado só com ele tem ranking com correlação 0,9 em relação ao medido no mundo gerado, em ~0,7 s por seed (contra ~1 min gerando).
+
+```
+git clone https://github.com/xpple/cubiomes tools/cubiomes      # fonte de terceiros: confira antes de compilar
+powershell -File native/build.ps1                                # gera native/shbiomes.dll (precisa do Visual Studio com C++)
+python native/verificar.py                                       # compara biomas do cubiomes com worlds/
+python native/anel_cubiomes.py                                   # score de anel so com o cubiomes vs medido
+```
+
+O MSVC compila os arquivos de bioma (o README do fork diz que ele não é suportado); o módulo de terreno e a estimativa de spawn (`finders.c`) não compilam nele, então o spawn ainda vem do servidor.
+
+**Etapa 0 do funil (`--garimpar`)**, em vez de `--random`:
+
+```
+python seed_hunter.py --garimpar 6 --amostra 600    # avalia 600 seeds só com o cubiomes e gera as 6 melhores
+```
+
+1. `triagem.py` avalia o anel de `--amostra` seeds aleatórias em paralelo (~8 seeds/s com 8 processos) e fica com as `N` de maior score (mínimo `--triagem-min`, 0,4: o score só-cubiomes fica uns 30% abaixo do medido no mundo).
+2. O Chunky gera **em volta do centro do anel** (e não do spawn), para o anel caber na área gerada. O centro e a triagem ficam gravados no JSON da seed.
+3. O resto do funil é o mesmo: análise de relevo no mundo gerado, juiz de imagem e `--aprovar`.
+
+Na rodada de teste, as 6 melhores de 600 deram score de relevo de 0,75 a 0,85 no mundo gerado e o cubiomes previu valores próximos (0,70 a 0,82). Já 24 seeds aleatórias sem triagem renderam só 4 candidatas, com máximo de 0,74.
+
 ### Jogar a seed no Minecraft
 
 O botão "Jogar no Minecraft" do inspetor mostra o comando, ou rode direto:

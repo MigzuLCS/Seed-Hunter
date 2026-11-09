@@ -219,6 +219,55 @@ def ring_score(H, B, angles=24, rmin=10, rmax=45, step=3):
     return best
 
 
+MOUNTAIN_BIOMES = ("frozen_peaks", "jagged_peaks", "stony_peaks", "snowy_slopes", "grove")
+
+
+def biome_ring_score(B, angles=24, rmin=6, rmax=45, step=3, mountains=MOUNTAIN_BIOMES):
+    """Anel decidido SO pelo mapa de biomas (sem alturas): um centro que nao e montanha, cercado em quase
+    todas as direcoes por biomas de montanha a uma distancia parecida. Como o terreno da 1.18+ e gerado pelos
+    mesmos ruidos que escolhem o bioma, picos nevados indicam terreno alto. Da para calcular sem gerar chunks."""
+    rows, cols = len(B), len(B[0])
+    is_m = [[bool(b) and any(m in b for m in mountains) for b in row] for row in B]
+    rays = []
+    for k in range(angles):
+        a = 2 * math.pi * k / angles
+        rays.append([(round(r * math.cos(a)), round(r * math.sin(a))) for r in range(rmax + 1)])
+    best = None
+    for cz in range(rmax, rows - rmax, step):
+        for cx in range(rmax, cols - rmax, step):
+            if is_m[cz][cx]:
+                continue
+            dists, ok = [], True
+            for ray in rays:
+                hit = None
+                for r, (dx, dz) in enumerate(ray):
+                    if B[cz + dz][cx + dx] is None:
+                        ok = False
+                        break
+                    if is_m[cz + dz][cx + dx]:
+                        hit = r
+                        break
+                if not ok:
+                    break
+                if hit is not None and hit >= rmin:
+                    dists.append(hit)
+                elif hit is not None:        # montanha colada no centro: nao e um interior
+                    dists.append(None)
+            if not ok:
+                continue
+            valid = [d for d in dists if d is not None]
+            frac = len(valid) / angles
+            if len(valid) < 3:
+                continue
+            mr = sum(valid) / len(valid)
+            round_ = max(0.0, 1 - math.sqrt(sum((d - mr) ** 2 for d in valid) / len(valid)) / mr)
+            score = frac * round_
+            if best is None or score > best["score"]:
+                best = {"score": round(score, 3), "cx": cx, "cz": cz, "anel": round(frac, 2),
+                        "redondeza": round(round_, 2), "raio": round(mr * STRIDE)}
+    return best
+
+
 def _biome_color(b, h):
     n = (b or "").replace("minecraft:", "")
     if h < 63 or "ocean" in n or n in ("river", "frozen_river"):

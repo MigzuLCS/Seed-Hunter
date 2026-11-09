@@ -33,9 +33,10 @@ LOCATE_RULES = [
 ]
 ORIGIN = "execute in minecraft:overworld positioned 0 64 0 run locate "
 
-# Ajustes do site do BlueMap (config/webapp.conf). O mapa so tem RADIUS blocos,
-# entao tudo pode ser renderizado em alta resolucao (o padrao do BlueMap e 100).
-WEBAPP_TWEAKS = {"hires-slider-max": 1000, "hires-slider-default": 500}
+# Ajustes do site do BlueMap (config/webapp.conf). O padrao do BlueMap e hires 100;
+# 300 cobre boa parte do mapa sem pesar tanto na GPU. Resolucao 0.8 alivia mais.
+# O slider continua livre no menu (max 1000 deixa ver os 480 blocos inteiros).
+WEBAPP_TWEAKS = {"hires-slider-max": 1000, "hires-slider-default": 300, "resolution-default": 0.8}
 
 MAP_TEMPLATE = """world: "{world}"
 dimension: "minecraft:overworld"

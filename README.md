@@ -67,7 +67,9 @@ O botão "Cavernas" do inspetor só fica ativo nas seeds que já têm esse mapa.
 
 ## Números medidos (PC de desenvolvimento)
 
-2,7 a 4 minutos por seed aprovada (raio 480) e cerca de 120 MB por seed somando mundo e mapa. Rode 2 ou 3 seeds antes de uma rodada longa.
+Cerca de 120 MB por seed somando mundo e mapa. O tempo por seed aprovada (raio 480) caiu de 3,7 a 4,9 min para ~1,7 min depois de subir o render do BlueMap de 1 para 8 threads (`CORE_TWEAKS`; amostra pequena). Seeds reprovadas levam 0,2 a 0,4 min e nunca chegam ao BlueMap. A fase mais lenta é a renderização, não a geração (Chunky: ~26 s para 3.700 chunks). Rode 2 ou 3 seeds antes de uma rodada longa.
+
+O pipeline sobrepõe as fases: enquanto o BlueMap renderiza a seed N, o Paper já filtra e gera a N+1 (um render por vez). Com isso o tempo registrado de cada seed no CSV inclui o que correu junto, então os minutos não somam o total da rodada; o total aparece no fim (`Rodada: N seeds em X min`). Para usar menos CPU, baixe `render-thread-count` em `CORE_TWEAKS`.
 
 ## Testes
 

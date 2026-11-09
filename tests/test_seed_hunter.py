@@ -41,6 +41,55 @@ class PatchConfTests(unittest.TestCase):
         self.assertEqual(out, "# hires-slider-default: 1\nhires-slider-default: 500\nother: 5\n")
 
 
+class PipelineTests(unittest.TestCase):
+    """run_seeds com prepare/render falsos: ordem, sobreposicao e destino de cada status."""
+
+    def run_fake(self, statuses, render_results):
+        import io, threading, time
+        events, lock = [], threading.Lock()
+        live = {"n": 0, "max": 0}
+
+        def log_ev(*e):
+            with lock:
+                events.append((time.time(),) + e)
+
+        def fake_prepare(seed, rules, radius, verbose, info=True):
+            log_ev("prep_start", seed); time.sleep(0.2); log_ev("prep_end", seed)
+            return statuses[seed], {}, {"x": 0, "y": 64, "z": 0}
+
+        def fake_render(seed, level, index, spawn, hits):
+            with lock:
+                live["n"] += 1; live["max"] = max(live["max"], live["n"])
+            log_ev("render_start", seed); time.sleep(0.5); log_ev("render_end", seed)
+            with lock:
+                live["n"] -= 1
+            r = render_results[seed]
+            if isinstance(r, Exception):
+                raise r
+            return r
+
+        saved = (sh.prepare, sh.render, sh.save_seed, sh.build_index, sh.done_seeds)
+        sh.prepare, sh.render, sh.save_seed = fake_prepare, fake_render, lambda *a, **k: None
+        sh.build_index, sh.done_seeds = lambda: 0, lambda: set()
+        buf = io.StringIO()
+        try:
+            sh.run_seeds(list(statuses), [], 480, False, False, 0, buf)
+        finally:
+            sh.prepare, sh.render, sh.save_seed, sh.build_index, sh.done_seeds = saved
+        rows = {l.split(";")[0]: l.split(";")[1] for l in buf.getvalue().splitlines()}
+        return events, rows, live["max"]
+
+    def test_overlap_order_and_destinations(self):
+        statuses = {"a": "ok", "b": "ok", "c": "reprovada", "d": "ok", "e": "ok"}
+        results = {"a": True, "b": True, "d": False, "e": RuntimeError("boom")}
+        events, rows, max_live = self.run_fake(statuses, results)
+        t = {(kind, seed): ts for ts, kind, seed in events}
+        self.assertLess(t[("prep_start", "b")], t[("render_end", "a")])        # gera a b enquanto a a renderiza
+        self.assertEqual(max_live, 1)                                          # nunca dois renders juntos
+        self.assertNotIn(("render_start", "c"), t)                             # reprovada nao vai ao BlueMap
+        self.assertEqual(rows, {"a": "ok", "b": "ok", "c": "reprovada", "d": "falha no bluemap", "e": "falha no bluemap"})
+
+
 class LocateCmdTests(unittest.TestCase):
     def test_measured_from_spawn(self):
         self.assertEqual(

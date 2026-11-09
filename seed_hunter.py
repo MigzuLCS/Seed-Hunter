@@ -7,6 +7,7 @@ pre-gera com Chunky -> renderiza no BlueMap com marcadores nativos.
 O resultados.csv e a fonte da verdade para retomar de onde parou.
 """
 import argparse, csv, json, queue, random, re, shutil, subprocess, sys, threading, time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 # ============================ CONFIGURACAO ============================
@@ -54,6 +55,10 @@ CAVE_SUFFIX = "_cav"                # mapa extra com cavernas abertas, gerado so
 # 300 cobre boa parte do mapa sem pesar tanto na GPU. Resolucao 0.8 alivia mais.
 # O slider continua livre no menu (max 1000 deixa ver os 480 blocos inteiros).
 WEBAPP_TWEAKS = {"hires-slider-max": 1000, "hires-slider-default": 300, "resolution-default": 0.8}
+
+# Config do nucleo do BlueMap (config/core.conf). O padrao e 1 thread de render, que deixa a CPU quase
+# parada: a renderizacao e a fase mais lenta do pipeline. 8 deixa folga em uma CPU de 12 threads.
+CORE_TWEAKS = {"render-thread-count": 8}
 
 MAP_TEMPLATE = """world: "{world}"
 dimension: "minecraft:overworld"
@@ -202,6 +207,10 @@ def check_setup():
         for p in problems:
             print("ERRO:", p)
         sys.exit(1)
+    core_text = core.read_text(encoding="utf-8")
+    patched = patch_conf(core_text, CORE_TWEAKS)
+    if patched != core_text:
+        core.write_text(patched, encoding="utf-8")
     webapp = BLUEMAP_DIR / "config" / "webapp.conf"
     if webapp.exists():
         old = webapp.read_text(encoding="utf-8")
@@ -317,7 +326,9 @@ def render(seed, level, sorting, spawn, hits):
     return r.returncode == 0
 
 
-def process(seed, index, rules, radius, verbose, info=True):
+def prepare(seed, rules, radius, verbose, info=True):
+    """Filtra e gera uma seed e deixa o mundo pronto em worlds/<level>. Nao renderiza.
+    Status "ok" = pronta para o BlueMap; qualquer outro (reprovada, falha...) nunca chega nele."""
     level = safe_id(seed)
     shutil.rmtree(SERVER_DIR / level, ignore_errors=True)      # restos de uma rodada interrompida
     shutil.rmtree(WORLDS_DIR / level, ignore_errors=True)
@@ -330,9 +341,6 @@ def process(seed, index, rules, radius, verbose, info=True):
             shutil.move(str(src), str(WORLDS_DIR / level))
         except OSError as e:
             return f"falha ao mover mundo: {e}", hits, spawn
-        print("   renderizando 3D...", flush=True)
-        if not render(seed, level, index, spawn, hits):
-            status = "falha no bluemap"
     else:
         shutil.rmtree(src, ignore_errors=True)
     return status, hits, spawn
@@ -404,6 +412,62 @@ def make_caves(seeds):
         print(f"   -> {'ok' if r.returncode == 0 else 'falha'} ({(time.time() - t0) / 60:.1f} min)")
 
 
+def run_seeds(seeds, rules, radius, verbose, info, limit, log):
+    """Pipeline com sobreposicao: enquanto o BlueMap renderiza a seed N, o Paper ja filtra/gera a N+1.
+    Um render por vez (o proximo espera o anterior), e seeds reprovadas nunca vao para o BlueMap."""
+    done = done_seeds()
+    w = csv.writer(log, delimiter=";")
+    pool = ThreadPoolExecutor(max_workers=1)
+    pending = None                       # (future, seed, hits, spawn, t0) da seed que esta renderizando
+    ran, t_start = 0, time.time()
+
+    def record(seed, status, hits, spawn, t0):
+        mins = (time.time() - t0) / 60   # com a sobreposicao, o tempo de uma seed inclui o que correu junto
+        brief = {k.split()[-1]: (v["dist"] if v else None) for k, v in hits.items()}
+        print(f"   -> {seed}: {status} {brief} ({mins:.1f} min)", flush=True)
+        save_seed(seed, status, hits, spawn, mins, radius)
+        w.writerow([seed, status, json.dumps(brief), f"{mins:.1f}"])
+        log.flush()
+        build_index()
+
+    def finish():
+        nonlocal pending
+        fut, seed, hits, spawn, t0 = pending
+        pending = None
+        try:
+            ok = fut.result()
+        except Exception as e:           # um render quebrado nao derruba a rodada
+            print(f"   render falhou: {e}")
+            ok = False
+        record(seed, "ok" if ok else "falha no bluemap", hits, spawn, t0)
+
+    try:
+        for i, seed in enumerate(seeds, 1):
+            if pending and pending[0].done():
+                finish()
+            if seed in done:
+                print(f"[{i}/{len(seeds)}] {seed}: ja processada, pulando")
+                continue
+            if limit and ran >= limit:
+                break
+            ran += 1
+            t0 = time.time()
+            print(f"[{i}/{len(seeds)}] {seed}: gerando...", flush=True)
+            status, hits, spawn = prepare(seed, rules, radius, verbose, info)
+            if status == "ok":
+                if pending:
+                    finish()             # so um render por vez: espera o anterior
+                print(f"   {seed}: renderizando 3D em segundo plano...", flush=True)
+                pending = (pool.submit(render, seed, safe_id(seed), i, spawn, hits), seed, hits, spawn, t0)
+            else:
+                record(seed, status, hits, spawn, t0)
+    finally:
+        if pending:
+            finish()
+        pool.shutdown()
+    print(f"\nRodada: {ran} seeds em {(time.time() - t_start) / 60:.1f} min", flush=True)
+
+
 def parse_rule(text):
     target, _, dist = text.rpartition("=")
     return target.strip(), int(dist)
@@ -431,31 +495,12 @@ def main():
         print(f"index.json: {build_index()} seeds")
         return
     seeds = load_seeds(args.random)
-    done = done_seeds()
     new_file = not RESULTS.exists()
-    ran = 0
     with RESULTS.open("a", encoding="utf-8", newline="") as log:
-        w = csv.writer(log, delimiter=";")
         if new_file:
-            w.writerow(["seed", "status", "achados", "minutos"])
-        for i, seed in enumerate(seeds, 1):
-            if seed in done:
-                print(f"[{i}/{len(seeds)}] {seed}: ja processada, pulando")
-                continue
-            if args.limit and ran >= args.limit:
-                break
-            ran += 1
-            t0 = time.time()
-            print(f"[{i}/{len(seeds)}] {seed}: gerando...", flush=True)
-            status, hits, spawn = process(seed, i, rules, args.radius, args.verbose, not args.sem_achados)
-            mins = (time.time() - t0) / 60
-            brief = {k.split()[-1]: (v["dist"] if v else None) for k, v in hits.items()}
-            print(f"   -> {status} {brief} ({mins:.1f} min)")
-            save_seed(seed, status, hits, spawn, mins, args.radius)
-            w.writerow([seed, status, json.dumps(brief), f"{mins:.1f}"])
-            log.flush()
-            build_index()
-    print(f"\nPronto! Interface: http://localhost:8100/ui/  (servir: cd bluemap && java -jar bluemap-cli.jar -w)")
+            csv.writer(log, delimiter=";").writerow(["seed", "status", "achados", "minutos"])
+        run_seeds(seeds, rules, args.radius, args.verbose, not args.sem_achados, args.limit, log)
+    print("Interface: http://localhost:8100/ui/  (servir: cd bluemap && java -jar bluemap-cli.jar -w; reinicie-o se ja estava ligado)")
 
 
 if __name__ == "__main__":

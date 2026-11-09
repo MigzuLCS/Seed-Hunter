@@ -1,0 +1,11 @@
+﻿# binarios e dados gerados (baixe pelos links do README)
+tools/
+server/*
+!server/plugins/
+server/plugins/*
+bluemap/*
+worlds/
+resultados.csv
+seeds.txt
+__pycache__/
+resultados/

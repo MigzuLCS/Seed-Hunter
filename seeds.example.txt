@@ -1,0 +1,4 @@
+# uma seed por linha; # comenta
+12345
+777
+-42    # seeds negativas funcionam

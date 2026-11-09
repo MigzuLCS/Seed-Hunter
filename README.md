@@ -48,6 +48,25 @@ Para ver os resultados: `cd bluemap && java -jar bluemap-cli.jar -w` e abra **ht
 
 **Reinicie o servidor (`-w`) depois de gerar seeds novas ou cavernas:** ele só serve os mapas que existiam quando subiu. Se o navegador mostrar "erro ao carregar este mapa" logo depois disso, recarregue com Ctrl+Shift+R (o BlueMap deixa respostas em cache por 24 h).
 
+### Funil de relevo: achar um anel de montanhas antes do BlueMap
+
+Renderizar custa tempo e disco, então o script mede o terreno antes. Para cada seed:
+
+1. **Gera** com o Paper e o Chunky (~1 min). Não há regra de vila por padrão: a vila é só informação. Dá para reativar com `--rule "structure #minecraft:village=480"`.
+2. **Mede o relevo** (`terrain.py`, ~8 s): lê os arquivos do mundo e procura um centro mais baixo cercado por uma crista alta em todas as direções (score de 0 a 1). Abaixo de `--anel-min` (0,5) o mundo é apagado na hora (`sem relevo`). O resto vira `candidata`, com uma imagem de relevo vista de cima em `resultados/relevo/`.
+3. **Juiz de imagem** (nota de 0 a 10 para "anel de montanhas, de preferência nevadas, com um bioma por dentro"). O score geométrico sozinho dá falsos positivos (planaltos, badlands), então um modelo de visão olha a imagem. Nos testes, o Sonnet acertou e o Haiku errou, então use o Sonnet.
+4. **Aprova:** nota ≥ `--nota-min` (7) vai ao BlueMap (`ok`); as outras são `descartada` e o mundo é apagado.
+
+```
+python seed_hunter.py --random 24            # passos 1 e 2
+python seed_hunter.py --juiz-preparar        # monta lotes de imagens com nomes embaralhados (resultados/juiz/lote_*)
+#   o juiz abre img_NN.png de cada lote e devolve {"notas": {"img_01": {"nota": 8, "neve": true, "motivo": "..."}}}
+python seed_hunter.py --juiz-aplicar resposta.json resultados/juiz/lote_...
+python seed_hunter.py --aprovar              # passo 4
+```
+
+As imagens vão sem o score nem a seed, para o juiz não ser influenciado. Na biblioteca, as candidatas aparecem com a imagem de relevo e a nota; "Neve" vira tag. `--sem-anel` desliga o funil (toda seed gerada vai direto ao BlueMap).
+
 ### Jogar a seed no Minecraft
 
 O botão "Jogar no Minecraft" do inspetor mostra o comando, ou rode direto:

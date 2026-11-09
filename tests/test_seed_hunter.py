@@ -53,9 +53,9 @@ class PipelineTests(unittest.TestCase):
             with lock:
                 events.append((time.time(),) + e)
 
-        def fake_prepare(seed, rules, radius, verbose, info=True):
+        def fake_prepare(seed, rules, radius, verbose, info=True, anel_min=None):
             log_ev("prep_start", seed); time.sleep(0.2); log_ev("prep_end", seed)
-            return statuses[seed], {}, {"x": 0, "y": 64, "z": 0}
+            return statuses[seed], {}, {"x": 0, "y": 64, "z": 0}, None
 
         def fake_render(seed, level, index, spawn, hits):
             with lock:
@@ -88,6 +88,87 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(max_live, 1)                                          # nunca dois renders juntos
         self.assertNotIn(("render_start", "c"), t)                             # reprovada nao vai ao BlueMap
         self.assertEqual(rows, {"a": "ok", "b": "ok", "c": "reprovada", "d": "falha no bluemap", "e": "falha no bluemap"})
+
+
+class FunnelTests(unittest.TestCase):
+    """Funil de relevo + juiz de imagem, com geracao, analise e render falsos, em pastas temporarias."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        d = Path(self.tmp.name)
+        self.saved = {k: getattr(sh, k) for k in ("SERVER_DIR", "WORLDS_DIR", "DATA_DIR", "RESULTS", "BLUEMAP_DIR", "WEB_UI")}
+        sh.SERVER_DIR, sh.WORLDS_DIR, sh.DATA_DIR = d / "server", d / "worlds", d / "resultados"
+        sh.RESULTS, sh.BLUEMAP_DIR, sh.WEB_UI = d / "resultados.csv", d / "bluemap", d / "bluemap" / "web" / "ui"
+        for p in (sh.SERVER_DIR, sh.WORLDS_DIR, sh.DATA_DIR / "relevo"):
+            p.mkdir(parents=True)
+        self.scores = {}
+        self.rendered = []
+        self.orig = (sh.generate, sh.terrain.analyze_world, sh.render)
+
+        def fake_generate(seed, level, rules, radius, verbose, info=True):
+            (sh.SERVER_DIR / level).mkdir()
+            return "ok", {"structure #minecraft:village": {"x": 1, "y": None, "z": 2, "dist": 5}}, {"x": 0, "y": 64, "z": 0}
+
+        def fake_analyze(level):
+            (sh.DATA_DIR / "relevo" / f"{level}.png").write_bytes(b"\x89PNG")
+            return {"score": self.scores[level]}
+
+        sh.generate, sh.terrain.analyze_world = fake_generate, fake_analyze
+        sh.render = lambda seed, level, sorting, spawn, hits: self.rendered.append(seed) or True
+
+    def tearDown(self):
+        sh.generate, sh.terrain.analyze_world, sh.render = self.orig
+        for k, v in self.saved.items():
+            setattr(sh, k, v)
+        self.tmp.cleanup()
+
+    def test_prepare_funnel_statuses(self):
+        self.scores = {"seed_1": 0.9, "seed_2": 0.2}
+        st1 = sh.prepare("1", [], 480, False, False, anel_min=0.5)
+        st2 = sh.prepare("2", [], 480, False, False, anel_min=0.5)
+        self.assertEqual(st1[0], "candidata")
+        self.assertTrue((sh.WORLDS_DIR / "seed_1").exists())            # candidata guarda o mundo para o juiz
+        self.assertEqual(st2[0], "sem relevo")
+        self.assertFalse((sh.WORLDS_DIR / "seed_2").exists())           # sem relevo: apagado na hora
+        self.assertFalse((sh.SERVER_DIR / "seed_2").exists())
+        st3 = sh.prepare("3", [], 480, False, False, anel_min=None)     # funil desligado: vai direto ao BlueMap
+        self.assertEqual(st3[0], "ok")
+        self.assertIsNone(st3[3])
+
+    def test_judge_flow(self):
+        import json
+        self.scores = {"seed_1": 0.9, "seed_2": 0.8, "seed_3": 0.7, "seed_4": 0.1}
+        for s in ("1", "2", "3", "4"):
+            status, hits, spawn, _ = sh.prepare(s, [], 480, False, False, anel_min=0.5)
+            sh.write_row(s, status, hits, spawn, 1.0, 480)
+        lotes = sh.juiz_preparar(lote_size=2)
+        self.assertEqual(len(lotes), 2)                                  # 3 candidatas em lotes de 2 (a 4 foi descartada)
+        mapa = {}
+        for d in lotes:
+            self.assertTrue(all((d / f"{k}.png").exists() for k in json.loads((d / "mapa.json").read_text())))
+            mapa.update({v: (d, k) for k, v in json.loads((d / "mapa.json").read_text()).items()})
+        self.assertEqual(set(mapa), {"1", "2", "3"})
+        for seed, nota in (("1", 9), ("2", 6), ("3", 8)):                # o juiz responde por imagem, com ou sem .png
+            d, img = mapa[seed]
+            resp = d / f"resp_{seed}.json"
+            resp.write_text(json.dumps({"notas": {img + ".png": {"nota": nota, "neve": seed == "1", "motivo": "x"}}}), encoding="utf-8")
+            self.assertEqual(sh.juiz_aplicar(resp, d), 1)
+        self.assertEqual(sh.juiz_preparar(), [])                         # tudo ja julgado: nada novo para julgar
+        feitos = sh.aprovar(nota_min=7, radius=480)
+        self.assertEqual(feitos["ok"], 2)                                # notas 9 e 8
+        self.assertEqual(feitos["descartada"], 1)                        # nota 6
+        self.assertEqual(sorted(self.rendered), ["1", "3"])
+        self.assertFalse((sh.WORLDS_DIR / "seed_2").exists())            # descartada: mundo apagado
+        self.assertTrue((sh.WORLDS_DIR / "seed_1").exists())
+        rows = sh.read_rows()
+        self.assertEqual({s: r["status"] for s, r in rows.items()},
+                         {"1": "ok", "2": "descartada", "3": "ok", "4": "sem relevo"})
+        idx = {s["seed"]: s for s in json.loads((sh.WEB_UI / "index.json").read_text(encoding="utf-8"))["seeds"]}
+        self.assertEqual(idx["1"]["juiz"]["nota"], 9.0)
+        self.assertTrue(idx["1"]["juiz"]["neve"])
+        self.assertTrue(idx["1"]["imagem"])
+        self.assertFalse(idx["4"]["imagem"])                             # sem relevo: sem imagem na interface
 
 
 class PlayWorldTests(unittest.TestCase):

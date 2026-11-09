@@ -10,6 +10,8 @@ import argparse, csv, json, os, queue, random, re, shutil, subprocess, sys, thre
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import terrain                      # mede o relevo do mundo (funil antes do BlueMap)
+
 # ============================ CONFIGURACAO ============================
 BASE = Path(__file__).resolve().parent
 SERVER_DIR = BASE / "server"        # paper.jar, eula.txt, plugins/Chunky-*.jar
@@ -27,14 +29,19 @@ BLUEMAP_RAM = "4G"
 RADIUS = 480                        # blocos em volta do spawn: 30 chunks
 # Regras do filtro: (alvo do /locate, distancia maxima do SPAWN em blocos).
 # Alvo = "structure <id>" ou "biome <id>". Lista vazia = sem filtro.
-LOCATE_RULES = [
-    ("structure #minecraft:village", 480),
-    # ("biome minecraft:cherry_grove", 800),
-    # ("biome minecraft:dappled_forest", 800),
-]
+# Por padrao NAO ha regra: o funil de relevo (abaixo) decide, e a vila fica so como informacao. Uma regra de vila
+# eliminava bons candidatos (por exemplo mundos nevados). Reative com --rule "structure #minecraft:village=480".
+LOCATE_RULES = []
+
+# Funil de relevo: depois do Chunky, terrain.py mede se ha um anel de montanhas em volta de uma area mais baixa.
+# Abaixo de ANEL_MIN o mundo e apagado ("sem relevo"); acima vira "candidata" e espera o juiz de imagem.
+ANEL_MIN = 0.5
+JUIZ_NOTA_MIN = 7                   # nota minima (0-10) do juiz para renderizar no BlueMap
+JUIZ_LOTE = 12                      # imagens por lote de juiz (lotes menores erram menos)
 # Achados informativos: rodam so depois que a seed passa no filtro e NUNCA reprovam.
 # Alimentam a lista de estruturas/biomas, as tags e os marcadores da interface.
 INFO_TARGETS = [
+    "structure #minecraft:village",
     "structure minecraft:trial_chambers",
     "structure #minecraft:ruined_portal",
     "structure minecraft:pillager_outpost",
@@ -84,7 +91,8 @@ ANSI = re.compile(r"\x1b\[[0-9;]*m")
 LOCATE_OK = re.compile(r"is at \[(-?\d+), (~|-?\d+), (-?\d+)\] \((\d+) blocks away\)")
 LOCATE_FAIL = re.compile(r"Could not find|Unknown or incomplete|Invalid|Unknown (structure|biome)")
 SPAWN_RE = re.compile(r"world spawn point to (-?\d+), (-?\d+), (-?\d+)")
-STATUS_FINAL = {"ok", "reprovada"}  # nao reprocessar; falhas sao tentadas de novo
+# Estados que nao se reprocessam; falhas sao tentadas de novo. "candidata" espera o juiz (mundo guardado em worlds/).
+STATUS_FINAL = {"ok", "reprovada", "sem relevo", "candidata", "descartada"}
 
 
 def clean(line):
@@ -326,9 +334,11 @@ def render(seed, level, sorting, spawn, hits):
     return r.returncode == 0
 
 
-def prepare(seed, rules, radius, verbose, info=True):
+def prepare(seed, rules, radius, verbose, info=True, anel_min=None):
     """Filtra e gera uma seed e deixa o mundo pronto em worlds/<level>. Nao renderiza.
-    Status "ok" = pronta para o BlueMap; qualquer outro (reprovada, falha...) nunca chega nele."""
+    Devolve (status, achados, spawn, relevo). Sem funil (anel_min None): "ok" = pronta para o BlueMap.
+    Com funil: mede o relevo; abaixo de anel_min o mundo e apagado ("sem relevo"), acima vira "candidata"
+    (mundo guardado, esperando o juiz). Qualquer outro status nunca chega ao BlueMap."""
     level = safe_id(seed)
     shutil.rmtree(SERVER_DIR / level, ignore_errors=True)      # restos de uma rodada interrompida
     shutil.rmtree(WORLDS_DIR / level, ignore_errors=True)
@@ -336,14 +346,23 @@ def prepare(seed, rules, radius, verbose, info=True):
     src = SERVER_DIR / level
     if status == "ok" and not src.exists():
         status = "mundo nao encontrado"
-    if status == "ok":
-        try:
-            shutil.move(str(src), str(WORLDS_DIR / level))
-        except OSError as e:
-            return f"falha ao mover mundo: {e}", hits, spawn
-    else:
+    if status != "ok":
         shutil.rmtree(src, ignore_errors=True)
-    return status, hits, spawn
+        return status, hits, spawn, None
+    try:
+        shutil.move(str(src), str(WORLDS_DIR / level))
+    except OSError as e:
+        return f"falha ao mover mundo: {e}", hits, spawn, None
+    if anel_min is None:
+        return "ok", hits, spawn, None
+    try:
+        relevo = terrain.analyze_world(level)
+    except Exception as e:                                     # mundo estranho: guarda para investigar
+        return f"falha na analise: {e}", hits, spawn, None
+    if relevo["score"] < anel_min:
+        shutil.rmtree(WORLDS_DIR / level, ignore_errors=True)
+        return "sem relevo", hits, spawn, relevo
+    return "candidata", hits, spawn, relevo
 
 
 def save_seed(seed, status, hits, spawn, mins, radius):
@@ -354,6 +373,17 @@ def save_seed(seed, status, hits, spawn, mins, radius):
     (DATA_DIR / f"{level}.json").write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def load_juiz():
+    """Notas do juiz de imagem: {seed: {"nota": 0-10, "neve": bool, "motivo": str}}."""
+    p = DATA_DIR / "juiz.json"
+    return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+
+
+def save_juiz(data):
+    DATA_DIR.mkdir(exist_ok=True)
+    (DATA_DIR / "juiz.json").write_text(json.dumps(data, indent=1, ensure_ascii=False), encoding="utf-8")
+
+
 def build_index():
     """Junta resultados.csv (fonte da verdade) com resultados/*.json em bluemap/web/ui/index.json."""
     rows = {}
@@ -361,6 +391,7 @@ def build_index():
         with RESULTS.open(encoding="utf-8-sig", newline="") as f:
             for r in csv.DictReader(f, delimiter=";"):
                 rows[r["seed"]] = r                       # a ultima linha de cada seed vence
+    juiz = load_juiz()
     seeds = []
     for seed, r in rows.items():
         level = safe_id(seed)
@@ -375,11 +406,21 @@ def build_index():
             except (ValueError, KeyError):
                 achados = {}
         has_map = (BLUEMAP_DIR / "web" / "maps" / level).exists() and r["status"] == "ok"
+        relevo = None
+        rp = DATA_DIR / "relevo" / f"{level}.json"
+        if rp.exists():
+            relevo = json.loads(rp.read_text(encoding="utf-8"))
+        img = DATA_DIR / "relevo" / f"{level}.png"
+        has_img = img.exists() and r["status"] in ("ok", "candidata")
+        if has_img:                                        # a interface le a imagem de relevo da mesma origem do mapa
+            (WEB_UI / "relevo").mkdir(parents=True, exist_ok=True)
+            shutil.copy2(img, WEB_UI / "relevo" / f"{level}.png")
         seeds.append({
             "seed": seed, "id": level, "status": r["status"], "minutos": float(r["minutos"] or 0),
             "spawn": extra.get("spawn"), "centro": extra.get("centro"), "achados": achados, "raio": extra.get("raio", RADIUS),
             "quando": extra.get("quando"), "mapa": has_map,
             "cavernas": has_map and (BLUEMAP_DIR / "web" / "maps" / (level + CAVE_SUFFIX)).exists(),
+            "relevo": relevo, "juiz": juiz.get(seed), "imagem": has_img,
         })
     WEB_UI.mkdir(parents=True, exist_ok=True)
     (WEB_UI / "index.json").write_text(json.dumps(
@@ -456,7 +497,93 @@ def play_world(seed, saves, force=False):
     return dst, "copiado"
 
 
-def run_seeds(seeds, rules, radius, verbose, info, limit, log):
+def read_rows():
+    """Ultima linha de cada seed em resultados.csv."""
+    rows = {}
+    if RESULTS.exists():
+        with RESULTS.open(encoding="utf-8-sig", newline="") as f:
+            for r in csv.DictReader(f, delimiter=";"):
+                rows[r["seed"]] = r
+    return rows
+
+
+def write_row(seed, status, hits, spawn, mins, radius):
+    """Registra o resultado de uma seed fora da rodada principal (aprovacao do juiz): JSON, CSV e index.json."""
+    brief = {k.split()[-1]: (v["dist"] if v else None) for k, v in hits.items()}
+    save_seed(seed, status, hits, spawn, mins, radius)
+    new = not RESULTS.exists()
+    with RESULTS.open("a", encoding="utf-8", newline="") as f:
+        w = csv.writer(f, delimiter=";")
+        if new:
+            w.writerow(["seed", "status", "achados", "minutos"])
+        w.writerow([seed, status, json.dumps(brief), f"{mins:.1f}"])
+    build_index()
+
+
+def juiz_preparar(lote_size=JUIZ_LOTE):
+    """Copia as imagens de relevo das candidatas sem nota para lotes com nomes embaralhados (img_01...).
+    O juiz ve so a imagem: nunca o score nem a seed. Devolve as pastas dos lotes (cada uma com mapa.json)."""
+    rows, juiz = read_rows(), load_juiz()
+    pend = [s for s, r in rows.items()
+            if r["status"] == "candidata" and s not in juiz and (DATA_DIR / "relevo" / f"{safe_id(s)}.png").exists()]
+    random.shuffle(pend)
+    stamp, lotes = time.strftime("%Y%m%d_%H%M%S"), []
+    for n in range(0, len(pend), lote_size):
+        d = DATA_DIR / "juiz" / f"lote_{stamp}_{n // lote_size + 1:02d}"
+        d.mkdir(parents=True)
+        mapa = {}
+        for i, s in enumerate(pend[n:n + lote_size], 1):
+            shutil.copy2(DATA_DIR / "relevo" / f"{safe_id(s)}.png", d / f"img_{i:02d}.png")
+            mapa[f"img_{i:02d}"] = s
+        (d / "mapa.json").write_text(json.dumps(mapa, indent=1), encoding="utf-8")
+        lotes.append(d)
+    return lotes
+
+
+def juiz_aplicar(resposta, lote):
+    """Le o JSON do juiz ({"notas": {"img_01": {"nota": 7, "neve": true, "motivo": "..."}}}) e grava em juiz.json."""
+    mapa = json.loads((Path(lote) / "mapa.json").read_text(encoding="utf-8"))
+    data = json.loads(Path(resposta).read_text(encoding="utf-8"))
+    notas, juiz, n = data.get("notas", data), load_juiz(), 0
+    for img, v in notas.items():
+        seed = mapa.get(re.sub(r"\.png$", "", img))
+        if seed is None:
+            continue
+        juiz[seed] = {"nota": float(v["nota"]), "neve": bool(v.get("neve", False)),
+                      "motivo": str(v.get("motivo", "")), "quando": time.strftime("%Y-%m-%dT%H:%M:%S")}
+        n += 1
+    save_juiz(juiz)
+    build_index()
+    return n
+
+
+def aprovar(nota_min=JUIZ_NOTA_MIN, radius=RADIUS):
+    """Fase final do funil: candidatas com nota >= nota_min vao para o BlueMap ("ok"); as demais
+    "descartada" e o mundo e apagado. Candidatas ainda sem nota ficam esperando."""
+    rows, juiz = read_rows(), load_juiz()
+    feitos = {"ok": 0, "descartada": 0, "falha no bluemap": 0}
+    for i, (seed, r) in enumerate(rows.items(), 1):
+        if r["status"] != "candidata" or seed not in juiz:
+            continue
+        level = safe_id(seed)
+        info = {}
+        p = DATA_DIR / f"{level}.json"
+        if p.exists():
+            info = json.loads(p.read_text(encoding="utf-8"))
+        hits, spawn, mins = info.get("achados", {}), info.get("spawn"), float(r["minutos"] or 0)
+        if juiz[seed]["nota"] >= nota_min:
+            print(f"{seed}: nota {juiz[seed]['nota']:g}, renderizando 3D...", flush=True)
+            ok = render(seed, level, i, spawn, hits)
+            status = "ok" if ok else "falha no bluemap"
+        else:
+            shutil.rmtree(WORLDS_DIR / level, ignore_errors=True)
+            status = "descartada"
+        feitos[status] += 1
+        write_row(seed, status, hits, spawn, mins, radius)
+    return feitos
+
+
+def run_seeds(seeds, rules, radius, verbose, info, limit, log, anel_min=None):
     """Pipeline com sobreposicao: enquanto o BlueMap renderiza a seed N, o Paper ja filtra/gera a N+1.
     Um render por vez (o proximo espera o anterior), e seeds reprovadas nunca vao para o BlueMap."""
     done = done_seeds()
@@ -497,7 +624,9 @@ def run_seeds(seeds, rules, radius, verbose, info, limit, log):
             ran += 1
             t0 = time.time()
             print(f"[{i}/{len(seeds)}] {seed}: gerando...", flush=True)
-            status, hits, spawn = prepare(seed, rules, radius, verbose, info)
+            status, hits, spawn, relevo = prepare(seed, rules, radius, verbose, info, anel_min)
+            if relevo:
+                print(f"   relevo: anel {relevo['score']} (neve {relevo.get('neve', '-')})", flush=True)
             if status == "ok":
                 if pending:
                     finish()             # so um render por vez: espera o anterior
@@ -528,6 +657,17 @@ def main():
     ap.add_argument("--sem-achados", action="store_true", help="pula os /locate informativos (mais rapido)")
     ap.add_argument("--cavernas", nargs="+", metavar="SEED", help="gera o mapa com cavernas abertas das seeds indicadas")
     ap.add_argument("--reindex", action="store_true", help="so atualiza a interface e o index.json")
+    ap.add_argument("--anel-min", type=float, default=ANEL_MIN, metavar="F",
+                    help="funil de relevo: score minimo (0-1) para virar candidata (padrao %(default)s)")
+    ap.add_argument("--sem-anel", action="store_true", help="desliga o funil de relevo: toda seed gerada vai direto ao BlueMap")
+    ap.add_argument("--juiz-preparar", action="store_true",
+                    help="monta lotes de imagens (nomes embaralhados) das candidatas sem nota, para o juiz")
+    ap.add_argument("--juiz-aplicar", nargs=2, metavar=("RESPOSTA.json", "LOTE"),
+                    help="grava as notas do juiz de um lote em resultados/juiz.json")
+    ap.add_argument("--aprovar", action="store_true",
+                    help="candidatas com nota >= --nota-min vao ao BlueMap; as outras sao descartadas (mundo apagado)")
+    ap.add_argument("--nota-min", type=float, default=JUIZ_NOTA_MIN, metavar="N",
+                    help="nota minima do juiz (0-10) para aprovar (padrao %(default)s)")
     ap.add_argument("--jogar", nargs="+", metavar="SEED", help="copia o mundo das seeds para a pasta saves do Minecraft")
     ap.add_argument("--saves", metavar="PASTA", help="pasta saves do Minecraft (padrao: %%APPDATA%%\\.minecraft\\saves)")
     ap.add_argument("--forcar", action="store_true", help="com --jogar: recopia mesmo que o mundo ja exista nos saves (apaga o progresso)")
@@ -551,6 +691,18 @@ def main():
     rules = LOCATE_RULES if args.rule is None else [parse_rule(r) for r in args.rule if not r.startswith("none")]
     check_setup()
     copy_ui()
+    if args.juiz_preparar:
+        lotes = juiz_preparar()
+        for d in lotes:
+            print(d)
+        print(f"{len(lotes)} lote(s) de ate {JUIZ_LOTE} imagens. O juiz abre img_NN.png e responde o JSON; depois: --juiz-aplicar RESPOSTA.json LOTE")
+        return
+    if args.juiz_aplicar:
+        print(f"{juiz_aplicar(*args.juiz_aplicar)} notas gravadas em resultados/juiz.json")
+        return
+    if args.aprovar:
+        print(aprovar(args.nota_min, args.radius))
+        return
     if args.cavernas or args.reindex:
         if args.cavernas:
             make_caves(args.cavernas)
@@ -561,7 +713,8 @@ def main():
     with RESULTS.open("a", encoding="utf-8", newline="") as log:
         if new_file:
             csv.writer(log, delimiter=";").writerow(["seed", "status", "achados", "minutos"])
-        run_seeds(seeds, rules, args.radius, args.verbose, not args.sem_achados, args.limit, log)
+        run_seeds(seeds, rules, args.radius, args.verbose, not args.sem_achados, args.limit, log,
+                  None if args.sem_anel else args.anel_min)
     print("Interface: http://localhost:8100/ui/  (servir: cd bluemap && java -jar bluemap-cli.jar -w; reinicie-o se ja estava ligado)")
 
 

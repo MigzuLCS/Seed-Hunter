@@ -40,7 +40,7 @@ const fmtDist = (d) => (d == null ? '—' : d + ' m');
 
 let DATA = null;
 const state = {
-  filter: store.get('filter', 'todas'), sort: store.get('sort', 'vila'), q: '',
+  filter: store.get('filter', 'todas'), sort: store.get('sort', 'nota'), q: '',
   favs: store.get('favs', {}), chosen: store.get('chosen', {}), notes: store.get('notes', {}),
 };
 const save = () => { store.set('filter', state.filter); store.set('sort', state.sort); store.set('favs', state.favs); store.set('chosen', state.chosen); store.set('notes', state.notes); };
@@ -77,35 +77,48 @@ function visibleSeeds() {
     if (f === 'favoritas' && !state.favs[s.seed]) return false;
     if (f === 'escolhidas' && !state.chosen[s.seed]) return false;
     if (f === 'aprovadas' && !ok(s)) return false;
-    if (f === 'reprovadas' && s.status !== 'reprovada') return false;
+    if (f === 'candidatas' && s.status !== 'candidata') return false;
+    if (f === 'descartadas' && (ok(s) || s.status === 'candidata')) return false;
     if (!q) return true;
     return s.seed.includes(q) || tagsOf(s).some((t) => t.toLowerCase().includes(q));
   });
   const inf = (d) => (d == null ? Infinity : d);
+  const nota = (s) => (s.juiz ? s.juiz.nota : -1);
+  const anel = (s) => (s.relevo ? s.relevo.score : -1);
   const sorts = {
+    nota: (a, b) => nota(b) - nota(a) || anel(b) - anel(a),                 // melhor anel primeiro (juiz, depois a geometria)
     vila: (a, b) => inf(villageDist(a)) - inf(villageDist(b)),
     recente: (a, b) => (b.quando || '').localeCompare(a.quando || ''),
     achados: (a, b) => near(b).length - near(a).length,
   };
-  return list.sort(sorts[state.sort] || sorts.vila);
+  return list.sort(sorts[state.sort] || sorts.nota);
 }
+
+const hasSnow = (s) => !!(s.juiz && s.juiz.neve) || !!(s.relevo && s.relevo.neve >= 0.6);
 
 function card(s) {
   const ok = s.status === 'ok';
+  const cand = s.status === 'candidata';
   const fav = !!state.favs[s.seed];
-  const tags = tagsOf(s).slice(0, 4);
+  const tags = (hasSnow(s) ? ['Neve'] : []).concat(tagsOf(s)).slice(0, 4);
+  // aprovada: tiles do BlueMap; candidata/descartada com analise: mapa de relevo visto de cima; senao, aviso
   const thumb = s.mapa
     ? `<canvas data-thumb="${esc(s.id)}" aria-hidden="true"></canvas><div class="pin" role="img" aria-label="Spawn" title="Spawn" style="${pinPos(s)}"></div>`
-    : `<div class="none">${ok ? 'Mapa não encontrado' : 'Seed descartada no filtro: sem mapa'}</div>`;
+    : s.imagem ? `<img src="relevo/${esc(s.id)}.png" alt="Relevo da seed visto de cima" loading="lazy">`
+    : `<div class="none">${ok ? 'Mapa não encontrado' : 'Seed descartada: sem mapa'}</div>`;
   const badge = ok ? '<span class="badge ok">Aprovada</span>'
-    : s.status === 'reprovada' ? '<span class="badge bad">Reprovada</span>' : `<span class="badge bad">${esc(s.status)}</span>`;
+    : cand ? '<span class="badge cand">Candidata</span>'
+    : `<span class="badge bad">${s.status === 'reprovada' ? 'Reprovada' : s.status === 'sem relevo' ? 'Sem relevo' : s.status === 'descartada' ? 'Descartada' : esc(s.status)}</span>`;
+  const lead = s.juiz ? ['Nota', `${s.juiz.nota}/10`] : s.relevo && s.relevo.score != null ? ['Anel', s.relevo.score.toFixed(2)] : ['Vila', fmtDist(villageDist(s))];
   const head = `<div class="thumb">${thumb}${badge}</div>
     <div class="head"><h2>Seed ${esc(s.seed.length > 12 ? s.seed.slice(0, 11) + '…' : s.seed)}</h2>${s.seed.length > 12 ? `<p class="sub">${esc(s.seed)}</p>` : ''}</div>`;
   const inner = s.mapa ? `<a class="link" href="#/seed/${esc(s.id)}">${head}</a>` : `<div class="link">${head}</div>`;
   return `<article class="card">${inner}
     <div class="tags">${tags.map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</div>
+    ${s.juiz && s.juiz.motivo ? `<p class="sub why">${esc(s.juiz.motivo)}</p>` : ''}
     <div class="foot"><div class="stats">
-      <div class="lead"><span>Vila</span><strong>${fmtDist(villageDist(s))}</strong></div>
+      <div class="lead"><span>${lead[0]}</span><strong>${lead[1]}</strong></div>
+      ${lead[0] === 'Vila' ? '' : `<div><span>Vila</span><strong>${fmtDist(villageDist(s))}</strong></div>`}
       <div title="Estruturas e biomas a até ${NEAR} m do spawn"><span>Por perto</span><strong>${near(s).length}</strong></div></div>
       <button type="button" class="icon-btn" data-fav="${esc(s.seed)}" aria-pressed="${fav}" aria-label="${fav ? 'Tirar dos favoritos' : 'Marcar como favorita'}">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="${fav ? '#F2B33D' : 'none'}" stroke="#F2B33D" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3 6.4 20.2l1.1-6.2L3 9.6l6.2-.9Z"/></svg>
@@ -118,14 +131,16 @@ function renderLibrary() {
     ['todas', 'Todas', all.length],
     ['favoritas', 'Favoritas', all.filter((s) => state.favs[s.seed]).length],
     ['escolhidas', 'Escolhidas', all.filter((s) => state.chosen[s.seed]).length],
+    ['candidatas', 'Candidatas', all.filter((s) => s.status === 'candidata').length],
     ['aprovadas', 'Aprovadas', all.filter((s) => s.status === 'ok').length],
-    ['reprovadas', 'Reprovadas', all.filter((s) => s.status === 'reprovada').length],
+    ['descartadas', 'Descartadas', all.filter((s) => s.status !== 'ok' && s.status !== 'candidata').length],
   ];
+  const nOk = all.filter((s) => s.status === 'ok').length, nCand = all.filter((s) => s.status === 'candidata').length;
   const list = visibleSeeds();
   $('#app').innerHTML = `<main class="lib">
   <header>
     <div class="brand"><div class="logo"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#1A1306" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 20 7.5v9L12 21l-8-4.5v-9Z"/><path d="M12 12 20 7.5M12 12 4 7.5M12 12v9"/></svg></div>
-      <div><h1>Seed Hunter</h1><p>${all.length} seeds testadas · ${defs[3][2]} aprovadas · Minecraft 26.3</p></div></div>
+      <div><h1>Seed Hunter</h1><p>${all.length} seeds testadas · ${nOk} aprovadas${nCand ? ` · ${nCand} candidatas` : ''} · Minecraft 26.3</p></div></div>
     <div class="tools">
       <label class="search"><span class="sr">Buscar seed</span>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9AA6B2" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
@@ -136,7 +151,7 @@ function renderLibrary() {
   <div class="bar">
     <div class="chips" role="group" aria-label="Filtrar seeds">${defs.map(([id, nome, n]) => `<button type="button" class="chip" data-filter="${id}" aria-pressed="${state.filter === id}">${nome}<small>${n}</small></button>`).join('')}</div>
     <label class="sort">Ordenar por
-      <select id="sort">${[['vila', 'Vila mais perto do spawn'], ['achados', 'Mais achados'], ['recente', 'Mais recente']].map(([v, t]) => `<option value="${v}"${state.sort === v ? ' selected' : ''}>${t}</option>`).join('')}</select></label>
+      <select id="sort">${[['nota', 'Melhor anel (nota do juiz)'], ['vila', 'Vila mais perto do spawn'], ['achados', 'Mais achados'], ['recente', 'Mais recente']].map(([v, t]) => `<option value="${v}"${state.sort === v ? ' selected' : ''}>${t}</option>`).join('')}</select></label>
   </div>
   ${list.length ? `<div class="grid">${list.map(card).join('')}</div>`
     : `<div class="empty">${all.length ? 'Nenhuma seed neste filtro.' : 'Ainda não há seeds. Rode <code>python seed_hunter.py</code> para gerar as primeiras.'}</div>`}

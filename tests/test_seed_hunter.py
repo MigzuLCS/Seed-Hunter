@@ -54,7 +54,7 @@ class PipelineTests(unittest.TestCase):
             with lock:
                 events.append((time.time(),) + e)
 
-        def fake_prepare(seed, rules, radius, verbose, info=True, anel_min=None, center=None, tipo="anel"):
+        def fake_prepare(seed, rules, radius, verbose, info=True, anel_min=None, center=None, tipo="anel", neve_min=None):
             self.centers_seen[seed] = center
             self.radius_seen[seed] = radius
             log_ev("prep_start", seed); time.sleep(0.2); log_ev("prep_end", seed)

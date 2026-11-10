@@ -40,3 +40,15 @@ TAREFA: nota de 0 a 10 para "parece uma bacia/cratera com um lago ou area baixa 
 10 = bacia redonda e fechada, paredes nevadas, lago no meio; 0 = nada disso. Oceano aberto ou montanhas soltas valem
 pouco. Marque neve (true/false).
 ```
+
+## Variante `--tipo cratera` (cratera funda com cerejeiras na borda)
+
+Troque "REFERENCIA" e "TAREFA" por:
+
+```
+REFERENCIA: uma CRATERA/caldeira funda com a borda coberta de CEREJEIRAS (rosa) e um fundo baixo, largo e plano, onde
+caberia uma cidade. As paredes sao altas e ingremes. Nao precisa ter neve.
+TAREFA: nota de 0 a 10 para "bacia redonda e fechada, com rosa (cerejeiras) na borda ou nas encostas e um fundo plano e
+largo". 10 = anel fechado com cerejeiras na crista e fundo amplo; 0 = nada disso. Rosa so em um ponto, ou montanhas
+soltas, valem pouco. Marque neve=true so se as paredes forem brancas; cinza e rocha.
+```

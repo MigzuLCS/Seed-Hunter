@@ -102,6 +102,15 @@ class RingTests(unittest.TestCase):
         self.assertLessEqual(abs(best["cx"] - 60) + abs(best["cz"] - 60), 6)
         self.assertEqual(tr.TIPOS["anel"]["interior_min"], 64)      # o tipo anel continua exigindo terra
 
+    def test_cherry_grove_is_not_snow_and_is_found_near_the_rim(self):
+        self.assertFalse(tr.is_snowy("minecraft:cherry_grove"))
+        self.assertTrue(tr.is_snowy("minecraft:grove") and tr.is_snowy("minecraft:snowy_slopes"))
+        H, B = crater()
+        B = [[("minecraft:cherry_grove" if b == "minecraft:jagged_peaks" else b) for b in row] for row in B]
+        best = tr.ring_score(H, B, **tr.TIPOS["cratera"])
+        self.assertGreaterEqual(best["cereja"], 0.9)
+        self.assertEqual(best["neve"], 0.0)
+
     def test_png_is_valid(self):
         import tempfile
         H, B = crater(size=40, ring_r=10)

@@ -177,7 +177,24 @@ SNOWY = ("frozen_peaks", "jagged_peaks", "snowy_slopes", "grove", "snowy_taiga",
 # Tipos de alvo: "anel" = interior em terra (>= 64) e desnivel de ~60 blocos ja pontua cheio; "bacia" = aceita interior
 # abaixo do nivel do mar (lago de cratera). A altura estimada do cubiomes ignora a agua que enche a bacia: ao prever
 # uma bacia, triagem.py limita o interior ao nivel do mar (SEA_LEVEL) para o desnivel bater com o mundo real.
-TIPOS = {"anel": {"interior_min": 64, "desnivel_ref": 60}, "bacia": {"interior_min": None, "desnivel_ref": 60}}
+TIPOS = {"anel": {"interior_min": 64, "desnivel_ref": 60}, "bacia": {"interior_min": None, "desnivel_ref": 60},
+         "cratera": {"interior_min": 64, "desnivel_ref": 80}}
+
+
+def is_snowy(biome):
+    """Bioma de neve? ("grove" tambem casaria com cherry_grove, que nao e neve.)"""
+    b = biome or ""
+    return "cherry" not in b and any(s in b for s in SNOWY)
+
+
+def _cherry_near_rim(H, B, cx, cz, rays, rmin):
+    """Fracao dos raios em que ha cerejeiral perto da crista (a ate 12 blocos de altura abaixo do ponto mais alto)."""
+    hit = 0
+    for ray in rays:
+        cells = [(H[cz + dz][cx + dx], B[cz + dz][cx + dx]) for dx, dz in ray[rmin:]]
+        top = max(h for h, _ in cells)
+        hit += any(h >= top - 12 and "cherry" in (b or "") for h, b in cells)
+    return hit / len(rays)
 
 
 def ring_score(H, B, angles=24, rmin=10, rmax=45, step=3, interior_min=64, desnivel_ref=60):
@@ -219,10 +236,11 @@ def ring_score(H, B, angles=24, rmin=10, rmax=45, step=3, interior_min=64, desni
             round_ = max(0.0, 1 - (math.sqrt(sum((d - mr) ** 2 for d in dists) / len(dists)) / mr))
             score = frac * min(1.0, dmean / desnivel_ref) * round_
             if best is None or score > best["score"]:
-                snow = sum(any(s in (b or "") for s in SNOWY) for b in rimb) / len(rimb)
+                snow = sum(is_snowy(b) for b in rimb) / len(rimb)
+                cherry = _cherry_near_rim(H, B, cx, cz, rays, rmin)
                 best = {"score": round(score, 3), "cx": cx, "cz": cz, "anel": round(frac, 2), "desnivel": round(dmean),
                         "minimo": round(min(deltas)), "redondeza": round(round_, 2), "raio": round(mr * STRIDE),
-                        "interior_y": round(inside), "neve": round(snow, 2)}
+                        "interior_y": round(inside), "neve": round(snow, 2), "cereja": round(cherry, 2)}
     return best
 
 

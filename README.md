@@ -100,6 +100,12 @@ Com a janela de 720 e o raio adaptativo (400 seeds em 124 s, 4 geradas): raios d
 python seed_hunter.py --garimpar 12 --amostra 5000 --tipo bacia
 ```
 
+**Cratera com cerejeiras (`--tipo cratera`).** Interior em terra e paredes altas (desnivel de ~80 blocos pontua cheio). `--cereja-min F` exige cerejeiral perto da crista (a ate 12 blocos abaixo do ponto mais alto) em ao menos essa fracao das direcoes; so ~0,6% das seeds passam de 0,2. `--neve-min` e `--cereja-min` usam a medida do terreno, nunca a nota do juiz. (Antes de `dfc1112` o bioma `grove` contava `cherry_grove` como neve; corrigido.)
+
+```
+python seed_hunter.py --garimpar 12 --amostra 5000 --tipo cratera --cereja-min 0.3
+```
+
 ### Jogar a seed no Minecraft
 
 O botão "Jogar no Minecraft" do inspetor mostra o comando, ou rode direto:

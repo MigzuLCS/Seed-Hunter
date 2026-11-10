@@ -44,12 +44,13 @@ def estimate_grid(seed, center_x=0, center_z=0, chunks=CHUNKS):
     return H, B, gx0, gz0
 
 
-def score_seed(seed, center_x=0, center_z=0, tipo="anel"):
+def score_seed(seed, center_x=0, center_z=0, tipo="anel", raio_min=0, raio_max=None):
     """Score de anel/bacia (0-1) de uma seed e o centro em blocos. Roda em processo separado (precisa ser top-level)."""
     H, B, gx0, gz0 = estimate_grid(seed, center_x, center_z)
     if tipo == "bacia":
         H = [[max(h, SEA_LEVEL) for h in row] for row in H]
-    best = terrain.ring_score(H, B, rmax=RMAX, **terrain.TIPOS[tipo])
+    best = terrain.ring_score(H, B, rmax=(raio_max // terrain.STRIDE if raio_max else RMAX), raio_min=raio_min,
+                              **terrain.TIPOS[tipo])
     if not best:
         return {"seed": seed, "score": 0.0}
     return {"seed": seed, "score": best["score"], "neve": best["neve"], "raio": best["raio"], "cereja": best.get("cereja", 0),
@@ -61,21 +62,23 @@ def random_seeds(n, rng=None):
     return [rng.randint(-2**63, 2**63 - 1) for _ in range(n)]
 
 
-def screen(pool, keep, min_score=TRIAGEM_MIN, workers=8, seeds=None, log=print, tipo="anel", neve_min=None, cereja_min=None):
-    """neve_min: fracao minima (0-1) da crista em bioma de neve (so o dado medido, nao o palpite do juiz).
+def screen(pool, keep, min_score=TRIAGEM_MIN, workers=8, seeds=None, log=print, tipo="anel", neve_min=None, cereja_min=None,
+           raio_min=0, raio_max=None, peso_cereja=0.0):
+    """raio_min/raio_max: faixa de raio do anel em blocos. peso_cereja: bonus no ranking (score + peso * cereja), sem filtrar.
+    neve_min: fracao minima (0-1) da crista em bioma de neve (so o dado medido, nao o palpite do juiz).
     Avalia `pool` seeds aleatorias (ou a lista `seeds`) e devolve as `keep` melhores com score >= min_score,
     da melhor para a pior. Cada item: {seed, score, neve, raio, x, z}."""
     seeds = list(seeds) if seeds is not None else random_seeds(pool)
     t0 = time.time()
     results = []
     with ProcessPoolExecutor(max_workers=workers) as ex:
-        for i, r in enumerate(ex.map(partial(score_seed, tipo=tipo), seeds, chunksize=4), 1):
+        for i, r in enumerate(ex.map(partial(score_seed, tipo=tipo, raio_min=raio_min, raio_max=raio_max), seeds, chunksize=4), 1):
             results.append(r)
             if log and i % 100 == 0:
                 log(f"   triagem: {i}/{len(seeds)} ({time.time() - t0:.0f}s)")
     passed = sorted((r for r in results if r["score"] >= min_score and r.get("neve", 0) >= (neve_min or 0)
                               and r.get("cereja", 0) >= (cereja_min or 0)),
-                    key=lambda r: -r["score"])
+                    key=lambda r: -(r["score"] + peso_cereja * r.get("cereja", 0)))
     if log:
         log(f"   triagem: {len(seeds)} seeds em {time.time() - t0:.0f}s ({len(seeds) / max(time.time() - t0, 1e-6):.1f}/s); "
             f"{len(passed)} com score >= {min_score}" + (f" e neve >= {neve_min}" if neve_min else "")

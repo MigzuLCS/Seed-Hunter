@@ -54,7 +54,7 @@ class PipelineTests(unittest.TestCase):
             with lock:
                 events.append((time.time(),) + e)
 
-        def fake_prepare(seed, rules, radius, verbose, info=True, anel_min=None, center=None, tipo="anel", neve_min=None, cereja_min=None):
+        def fake_prepare(seed, rules, radius, verbose, info=True, anel_min=None, center=None, tipo="anel", neve_min=None, cereja_min=None, raio_min=0):
             self.centers_seen[seed] = center
             self.radius_seen[seed] = radius
             log_ev("prep_start", seed); time.sleep(0.2); log_ev("prep_end", seed)
@@ -116,7 +116,7 @@ class FunnelTests(unittest.TestCase):
             (sh.SERVER_DIR / level).mkdir()
             return "ok", {"structure #minecraft:village": {"x": 1, "y": None, "z": 2, "dist": 5}}, {"x": 0, "y": 64, "z": 0}
 
-        def fake_analyze(level, out_dir=None, rmax=45, tipo="anel"):
+        def fake_analyze(level, out_dir=None, rmax=45, tipo="anel", raio_min=0):
             (sh.DATA_DIR / "relevo" / f"{level}.png").write_bytes(b"\x89PNG")
             return {"score": self.scores[level]}
 

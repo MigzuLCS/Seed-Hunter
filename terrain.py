@@ -197,9 +197,9 @@ def _cherry_near_rim(H, B, cx, cz, rays, rmin):
     return hit / len(rays)
 
 
-def ring_score(H, B, angles=24, rmin=10, rmax=45, step=3, interior_min=64, desnivel_ref=60):
+def ring_score(H, B, angles=24, rmin=10, rmax=45, step=3, interior_min=64, desnivel_ref=60, raio_min=0):
     """Procura o melhor centro para um anel: area interna mais baixa e uma crista alta em volta, em todas as direcoes.
-    Raios em celulas (STRIDE blocos). `interior_min`: altura media minima do interior (64 = so terra; None aceita
+    Raios em celulas (STRIDE blocos). `raio_min`: raio medio minimo do anel em blocos (descarta aneis pequenos). `interior_min`: altura media minima do interior (64 = so terra; None aceita
     bacias abaixo do nivel do mar, como um lago de cratera). Devolve o dict da melhor hipotese (ou None)."""
     rows, cols = len(H), len(H[0])
     rays = []
@@ -233,6 +233,8 @@ def ring_score(H, B, angles=24, rmin=10, rmax=45, step=3, interior_min=64, desni
             dmean = sum(deltas) / len(deltas)
             frac = sum(d >= 20 for d in deltas) / len(deltas)
             mr = sum(dists) / len(dists)
+            if mr * STRIDE < raio_min:
+                continue
             round_ = max(0.0, 1 - (math.sqrt(sum((d - mr) ** 2 for d in dists) / len(dists)) / mr))
             score = frac * min(1.0, dmean / desnivel_ref) * round_
             if best is None or score > best["score"]:
@@ -352,7 +354,7 @@ def relief_png(H, B, path, mark=None, scale=3):
     Path(path).write_bytes(png)
 
 
-def analyze_world(level, out_dir=None, rmax=45, tipo="anel"):
+def analyze_world(level, out_dir=None, rmax=45, tipo="anel", raio_min=0):
     """Mede um mundo de worlds/<level>. Grava resultados/relevo/<level>.png e .json e devolve as metricas.
     rmax = maior anel procurado, em celulas de 4 blocos. O padrao (45 = 180 blocos) varre a area toda; um mundo
     gerado em volta do centro de um anel grande pede um rmax maior (a busca fica perto do meio da area)."""
@@ -360,7 +362,7 @@ def analyze_world(level, out_dir=None, rmax=45, tipo="anel"):
     out.mkdir(parents=True, exist_ok=True)
     cells = sample_world(BASE / "worlds" / level)
     H, B, gx0, gz0 = to_grid(cells)
-    best = ring_score(H, B, rmax=rmax, **TIPOS[tipo]) or {"score": 0.0}
+    best = ring_score(H, B, rmax=rmax, raio_min=raio_min, **TIPOS[tipo]) or {"score": 0.0}
     mark = (best["cx"], best["cz"]) if "cx" in best else None
     if mark:
         best["centro"] = {"x": (gx0 + best["cx"]) * STRIDE, "z": (gz0 + best["cz"]) * STRIDE}

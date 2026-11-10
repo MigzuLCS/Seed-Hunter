@@ -341,7 +341,7 @@ def render(seed, level, sorting, spawn, hits):
     return r.returncode == 0
 
 
-def prepare(seed, rules, radius, verbose, info=True, anel_min=None, center=None, tipo="anel", neve_min=None, cereja_min=None):
+def prepare(seed, rules, radius, verbose, info=True, anel_min=None, center=None, tipo="anel", neve_min=None, cereja_min=None, raio_min=0):
     """Filtra e gera uma seed e deixa o mundo pronto em worlds/<level>. Nao renderiza.
     Devolve (status, achados, spawn, relevo). Sem funil (anel_min None): "ok" = pronta para o BlueMap.
     Com funil: mede o relevo; abaixo de anel_min o mundo e apagado ("sem relevo"), acima vira "candidata"
@@ -366,7 +366,7 @@ def prepare(seed, rules, radius, verbose, info=True, anel_min=None, center=None,
     # sem centro (spawn), mantem o padrao, que varre a area toda
     rmax = max(45, min(100, radius // terrain.STRIDE - 8)) if center else 45
     try:
-        relevo = terrain.analyze_world(level, rmax=rmax, tipo=tipo)
+        relevo = terrain.analyze_world(level, rmax=rmax, tipo=tipo, raio_min=raio_min)
     except Exception as e:                                     # mundo estranho: guarda para investigar
         return f"falha na analise: {e}", hits, spawn, None
     if relevo["score"] < anel_min or (neve_min and relevo.get("neve", 0) < neve_min)             or (cereja_min and relevo.get("cereja", 0) < cereja_min):
@@ -597,7 +597,7 @@ def aprovar(nota_min=JUIZ_NOTA_MIN, radius=RADIUS, neve_min=None, cereja_min=Non
     return feitos
 
 
-def run_seeds(seeds, rules, radius, verbose, info, limit, log, anel_min=None, centros=None, tipo="anel", neve_min=None, cereja_min=None):
+def run_seeds(seeds, rules, radius, verbose, info, limit, log, anel_min=None, centros=None, tipo="anel", neve_min=None, cereja_min=None, raio_min=0):
     """Pipeline com sobreposicao: enquanto o BlueMap renderiza a seed N, o Paper ja filtra/gera a N+1.
     Um render por vez (o proximo espera o anterior), e seeds reprovadas nunca vao para o BlueMap.
     centros: {seed: resultado da triagem} - o Chunky gera em volta do centro do anel em vez do spawn."""
@@ -645,7 +645,7 @@ def run_seeds(seeds, rules, radius, verbose, info, limit, log, anel_min=None, ce
             if tri:
                 print(f"   raio de geracao: {rad} blocos (anel ~{tri['raio']})", flush=True)
             status, hits, spawn, relevo = prepare(seed, rules, rad, verbose, info, anel_min,
-                                                  {"x": tri["x"], "z": tri["z"]} if tri else None, tipo, neve_min, cereja_min)
+                                                  {"x": tri["x"], "z": tri["z"]} if tri else None, tipo, neve_min, cereja_min, raio_min)
             if relevo:
                 est = f" (cubiomes previu {tri['score']})" if tri else ""
                 print(f"   relevo: anel {relevo['score']} (neve {relevo.get('neve', '-')}){est}", flush=True)
@@ -693,6 +693,12 @@ def main():
                     help="exige que ao menos esta fracao (0-1) da crista seja bioma de neve, medida no terreno (triagem, funil e --aprovar)")
     ap.add_argument("--cereja-min", type=float, default=None, metavar="F",
                     help="exige que ao menos esta fracao (0-1) das cristas tenha cerejeiral por perto (use com --tipo cratera)")
+    ap.add_argument("--raio-min", type=int, default=0, metavar="BLOCOS",
+                    help="descarta aneis com raio menor que isto (triagem e analise do mundo)")
+    ap.add_argument("--raio-max", type=int, default=None, metavar="BLOCOS",
+                    help="maior anel procurado na triagem (padrao 300; janela de 720 blocos)")
+    ap.add_argument("--peso-cereja", type=float, default=0.0, metavar="F",
+                    help="bonus no ranking da triagem: score + F * cereja (sem filtrar; 0,2 sobe as cerejeiras)")
     ap.add_argument("--workers", type=int, default=8, help="com --garimpar: processos em paralelo (padrao %(default)s)")
     ap.add_argument("--juiz-preparar", action="store_true",
                     help="monta lotes de imagens (nomes embaralhados) das candidatas sem nota, para o juiz")
@@ -746,7 +752,8 @@ def main():
     if args.garimpar:
         picks = triagem.screen(args.amostra or 60 * args.garimpar, args.garimpar,
                                args.triagem_min if args.triagem_min is not None else triagem.TRIAGEM_MIN, args.workers,
-                               tipo=args.tipo, neve_min=args.neve_min, cereja_min=args.cereja_min)
+                               tipo=args.tipo, neve_min=args.neve_min, cereja_min=args.cereja_min,
+                               raio_min=args.raio_min, raio_max=args.raio_max, peso_cereja=args.peso_cereja)
         if not picks:
             print("Nenhuma seed passou na triagem: aumente --amostra ou baixe --triagem-min.")
             return
@@ -761,7 +768,7 @@ def main():
         if new_file:
             csv.writer(log, delimiter=";").writerow(["seed", "status", "achados", "minutos"])
         run_seeds(seeds, rules, args.radius, args.verbose, not args.sem_achados, args.limit, log,
-                  None if args.sem_anel else args.anel_min, centros, args.tipo, args.neve_min, args.cereja_min)
+                  None if args.sem_anel else args.anel_min, centros, args.tipo, args.neve_min, args.cereja_min, args.raio_min)
     print("Interface: http://localhost:8100/ui/  (servir: cd bluemap && java -jar bluemap-cli.jar -w; reinicie-o se ja estava ligado)")
 
 

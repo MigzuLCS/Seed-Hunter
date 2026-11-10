@@ -28,3 +28,15 @@ Responda SOMENTE com um JSON, sem texto fora dele:
 ```
 
 Depois: `python seed_hunter.py --juiz-aplicar resposta.json <pasta do lote>` e `python seed_hunter.py --aprovar`.
+
+## Variante `--tipo bacia` (lago congelado cercado de penhascos)
+
+Troque o bloco "REFERENCIA" e "TAREFA" por:
+
+```
+REFERENCIA: um LAGO (de preferencia CONGELADO, em gelo/neve) dentro de uma bacia redonda, cercado por penhascos ou
+cristas altas e nevadas em todos os lados. O interior pode ser agua, gelo ou um prado baixo.
+TAREFA: nota de 0 a 10 para "parece uma bacia/cratera com um lago ou area baixa no meio e paredes altas em volta".
+10 = bacia redonda e fechada, paredes nevadas, lago no meio; 0 = nada disso. Oceano aberto ou montanhas soltas valem
+pouco. Marque neve (true/false).
+```

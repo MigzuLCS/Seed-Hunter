@@ -174,9 +174,16 @@ SNOWY = ("frozen_peaks", "jagged_peaks", "snowy_slopes", "grove", "snowy_taiga",
          "snowy_beach", "frozen_river", "frozen_ocean")
 
 
-def ring_score(H, B, angles=24, rmin=10, rmax=45, step=3):
+# Tipos de alvo: "anel" = interior em terra (>= 64) e desnivel de ~60 blocos ja pontua cheio; "bacia" = aceita interior
+# abaixo do nivel do mar (lago de cratera). A altura estimada do cubiomes ignora a agua que enche a bacia: ao prever
+# uma bacia, triagem.py limita o interior ao nivel do mar (SEA_LEVEL) para o desnivel bater com o mundo real.
+TIPOS = {"anel": {"interior_min": 64, "desnivel_ref": 60}, "bacia": {"interior_min": None, "desnivel_ref": 60}}
+
+
+def ring_score(H, B, angles=24, rmin=10, rmax=45, step=3, interior_min=64, desnivel_ref=60):
     """Procura o melhor centro para um anel: area interna mais baixa e uma crista alta em volta, em todas as direcoes.
-    Raios em celulas (STRIDE blocos). Devolve o dict da melhor hipotese (ou None)."""
+    Raios em celulas (STRIDE blocos). `interior_min`: altura media minima do interior (64 = so terra; None aceita
+    bacias abaixo do nivel do mar, como um lago de cratera). Devolve o dict da melhor hipotese (ou None)."""
     rows, cols = len(H), len(H[0])
     rays = []
     for k in range(angles):
@@ -203,14 +210,14 @@ def ring_score(H, B, angles=24, rmin=10, rmax=45, step=3):
             if not ok:
                 continue
             inside = sum(inner) / len(inner)
-            if inside < 64:                                   # interior precisa ser terra, nao mar
+            if interior_min is not None and inside < interior_min:   # padrao: interior precisa ser terra, nao mar
                 continue
             deltas = [t - inside for t in rims]
             dmean = sum(deltas) / len(deltas)
             frac = sum(d >= 20 for d in deltas) / len(deltas)
             mr = sum(dists) / len(dists)
             round_ = max(0.0, 1 - (math.sqrt(sum((d - mr) ** 2 for d in dists) / len(dists)) / mr))
-            score = frac * min(1.0, dmean / 60) * round_
+            score = frac * min(1.0, dmean / desnivel_ref) * round_
             if best is None or score > best["score"]:
                 snow = sum(any(s in (b or "") for s in SNOWY) for b in rimb) / len(rimb)
                 best = {"score": round(score, 3), "cx": cx, "cz": cz, "anel": round(frac, 2), "desnivel": round(dmean),
@@ -327,7 +334,7 @@ def relief_png(H, B, path, mark=None, scale=3):
     Path(path).write_bytes(png)
 
 
-def analyze_world(level, out_dir=None, rmax=45):
+def analyze_world(level, out_dir=None, rmax=45, tipo="anel"):
     """Mede um mundo de worlds/<level>. Grava resultados/relevo/<level>.png e .json e devolve as metricas.
     rmax = maior anel procurado, em celulas de 4 blocos. O padrao (45 = 180 blocos) varre a area toda; um mundo
     gerado em volta do centro de um anel grande pede um rmax maior (a busca fica perto do meio da area)."""
@@ -335,7 +342,7 @@ def analyze_world(level, out_dir=None, rmax=45):
     out.mkdir(parents=True, exist_ok=True)
     cells = sample_world(BASE / "worlds" / level)
     H, B, gx0, gz0 = to_grid(cells)
-    best = ring_score(H, B, rmax=rmax) or {"score": 0.0}
+    best = ring_score(H, B, rmax=rmax, **TIPOS[tipo]) or {"score": 0.0}
     mark = (best["cx"], best["cz"]) if "cx" in best else None
     if mark:
         best["centro"] = {"x": (gx0 + best["cx"]) * STRIDE, "z": (gz0 + best["cz"]) * STRIDE}

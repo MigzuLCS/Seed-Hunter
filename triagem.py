@@ -7,12 +7,14 @@ de relevo (terrain.py) e o juiz de imagem continuam decidindo depois.
 """
 import random
 import time
+from functools import partial
 from concurrent.futures import ProcessPoolExecutor
 
 import shcubiomes
 import terrain
 
 CAL_A, CAL_B = 0.80, 20.2         # altura_real ~ A * altura_cubiomes + B (regressao em native/altura.py)
+SEA_LEVEL = 62                    # bacias abaixo disso viram lago: a superficie e a agua
 CHUNKS = 45                       # janela avaliada: 45 chunks de raio = 720 blocos em volta de (0,0)
 RMAX = 75                         # maior anel procurado, em celulas de 4 blocos = 300 blocos de raio
 TRIAGEM_MIN = 0.4                 # o score so-cubiomes fica uns 30% abaixo do medido no mundo (0,5): 0,4 equivale
@@ -42,10 +44,12 @@ def estimate_grid(seed, center_x=0, center_z=0, chunks=CHUNKS):
     return H, B, gx0, gz0
 
 
-def score_seed(seed, center_x=0, center_z=0):
-    """Score de anel (0-1) de uma seed e o centro do anel em blocos. Roda em processo separado (precisa ser top-level)."""
+def score_seed(seed, center_x=0, center_z=0, tipo="anel"):
+    """Score de anel/bacia (0-1) de uma seed e o centro em blocos. Roda em processo separado (precisa ser top-level)."""
     H, B, gx0, gz0 = estimate_grid(seed, center_x, center_z)
-    best = terrain.ring_score(H, B, rmax=RMAX)
+    if tipo == "bacia":
+        H = [[max(h, SEA_LEVEL) for h in row] for row in H]
+    best = terrain.ring_score(H, B, rmax=RMAX, **terrain.TIPOS[tipo])
     if not best:
         return {"seed": seed, "score": 0.0}
     return {"seed": seed, "score": best["score"], "neve": best["neve"], "raio": best["raio"],
@@ -57,14 +61,14 @@ def random_seeds(n, rng=None):
     return [rng.randint(-2**63, 2**63 - 1) for _ in range(n)]
 
 
-def screen(pool, keep, min_score=TRIAGEM_MIN, workers=8, seeds=None, log=print):
+def screen(pool, keep, min_score=TRIAGEM_MIN, workers=8, seeds=None, log=print, tipo="anel"):
     """Avalia `pool` seeds aleatorias (ou a lista `seeds`) e devolve as `keep` melhores com score >= min_score,
     da melhor para a pior. Cada item: {seed, score, neve, raio, x, z}."""
     seeds = list(seeds) if seeds is not None else random_seeds(pool)
     t0 = time.time()
     results = []
     with ProcessPoolExecutor(max_workers=workers) as ex:
-        for i, r in enumerate(ex.map(score_seed, seeds, chunksize=4), 1):
+        for i, r in enumerate(ex.map(partial(score_seed, tipo=tipo), seeds, chunksize=4), 1):
             results.append(r)
             if log and i % 100 == 0:
                 log(f"   triagem: {i}/{len(seeds)} ({time.time() - t0:.0f}s)")

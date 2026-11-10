@@ -94,6 +94,12 @@ Na rodada de teste, as 6 melhores de 600 deram score de relevo de 0,75 a 0,85 no
 
 Com a janela de 720 e o raio adaptativo (400 seeds em 124 s, 4 geradas): raios de geração de 320 a 424 blocos, 0,6 a 0,9 min e 30 a 57 MB por seed (contra ~1 min e ~60 MB com 480 fixos). **Cuidado:** anéis maiores dão mais falsos positivos, porque há mais combinações de centro e raio. O melhor da rodada (score 0,80, anel de ~264 blocos) é visualmente um lago num vale com picos nevados soltos, não um anel; o juiz de imagem continua sendo o filtro final.
 
+**Outros alvos (`--tipo bacia`).** Por padrao o interior do anel precisa ser terra (`--tipo anel`). Com `--tipo bacia` a triagem aceita um interior abaixo do nivel do mar, ou seja, um **lago de cratera cercado de penhascos** (por exemplo, um lago congelado em volta de neve). O Cubiomes ignora a agua que enche a bacia, entao a triagem limita o interior ao nivel do mar (`SEA_LEVEL`) para o desnivel bater com o mundo real. Teste: a seed de um video de "fase de Natal" (`-123456793079414942`) pontua 0,93 so com o Cubiomes e 0,92 gerada (lago congelado redondo, raio ~170, 100% de neve). A variante do prompt do juiz esta em `docs/juiz-prompt.md`.
+
+```
+python seed_hunter.py --garimpar 12 --amostra 5000 --tipo bacia
+```
+
 ### Jogar a seed no Minecraft
 
 O botão "Jogar no Minecraft" do inspetor mostra o comando, ou rode direto:

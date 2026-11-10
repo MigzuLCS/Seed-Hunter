@@ -95,6 +95,13 @@ class RingTests(unittest.TestCase):
         # centros em cima da propria crista ainda podem pontuar, mas nunca como uma cratera de terra de verdade
         self.assertTrue(best is None or best["score"] < 0.5, best)
 
+    def test_basin_type_accepts_lake_below_sea_level(self):
+        H, B = crater(floor=50)                     # lago de cratera: interior abaixo do mar
+        best = tr.ring_score(H, B, **tr.TIPOS["bacia"])
+        self.assertGreater(best["score"], 0.5)
+        self.assertLessEqual(abs(best["cx"] - 60) + abs(best["cz"] - 60), 6)
+        self.assertEqual(tr.TIPOS["anel"]["interior_min"], 64)      # o tipo anel continua exigindo terra
+
     def test_png_is_valid(self):
         import tempfile
         H, B = crater(size=40, ring_r=10)

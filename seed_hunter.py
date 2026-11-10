@@ -341,7 +341,7 @@ def render(seed, level, sorting, spawn, hits):
     return r.returncode == 0
 
 
-def prepare(seed, rules, radius, verbose, info=True, anel_min=None, center=None):
+def prepare(seed, rules, radius, verbose, info=True, anel_min=None, center=None, tipo="anel"):
     """Filtra e gera uma seed e deixa o mundo pronto em worlds/<level>. Nao renderiza.
     Devolve (status, achados, spawn, relevo). Sem funil (anel_min None): "ok" = pronta para o BlueMap.
     Com funil: mede o relevo; abaixo de anel_min o mundo e apagado ("sem relevo"), acima vira "candidata"
@@ -366,7 +366,7 @@ def prepare(seed, rules, radius, verbose, info=True, anel_min=None, center=None)
     # sem centro (spawn), mantem o padrao, que varre a area toda
     rmax = max(45, min(100, radius // terrain.STRIDE - 8)) if center else 45
     try:
-        relevo = terrain.analyze_world(level, rmax=rmax)
+        relevo = terrain.analyze_world(level, rmax=rmax, tipo=tipo)
     except Exception as e:                                     # mundo estranho: guarda para investigar
         return f"falha na analise: {e}", hits, spawn, None
     if relevo["score"] < anel_min:
@@ -595,7 +595,7 @@ def aprovar(nota_min=JUIZ_NOTA_MIN, radius=RADIUS):
     return feitos
 
 
-def run_seeds(seeds, rules, radius, verbose, info, limit, log, anel_min=None, centros=None):
+def run_seeds(seeds, rules, radius, verbose, info, limit, log, anel_min=None, centros=None, tipo="anel"):
     """Pipeline com sobreposicao: enquanto o BlueMap renderiza a seed N, o Paper ja filtra/gera a N+1.
     Um render por vez (o proximo espera o anterior), e seeds reprovadas nunca vao para o BlueMap.
     centros: {seed: resultado da triagem} - o Chunky gera em volta do centro do anel em vez do spawn."""
@@ -643,7 +643,7 @@ def run_seeds(seeds, rules, radius, verbose, info, limit, log, anel_min=None, ce
             if tri:
                 print(f"   raio de geracao: {rad} blocos (anel ~{tri['raio']})", flush=True)
             status, hits, spawn, relevo = prepare(seed, rules, rad, verbose, info, anel_min,
-                                                  {"x": tri["x"], "z": tri["z"]} if tri else None)
+                                                  {"x": tri["x"], "z": tri["z"]} if tri else None, tipo)
             if relevo:
                 est = f" (cubiomes previu {tri['score']})" if tri else ""
                 print(f"   relevo: anel {relevo['score']} (neve {relevo.get('neve', '-')}){est}", flush=True)
@@ -685,6 +685,8 @@ def main():
     ap.add_argument("--amostra", type=int, metavar="M", help="com --garimpar: quantas seeds aleatorias avaliar (padrao 60*N)")
     ap.add_argument("--triagem-min", type=float, default=None, metavar="F",
                     help="com --garimpar: score minimo so-cubiomes (padrao triagem.TRIAGEM_MIN = 0,4)")
+    ap.add_argument("--tipo", choices=sorted(terrain.TIPOS), default="anel",
+                    help="o que procurar: anel (interior em terra) ou bacia (aceita lago de cratera, exige paredes mais altas)")
     ap.add_argument("--workers", type=int, default=8, help="com --garimpar: processos em paralelo (padrao %(default)s)")
     ap.add_argument("--juiz-preparar", action="store_true",
                     help="monta lotes de imagens (nomes embaralhados) das candidatas sem nota, para o juiz")
@@ -737,7 +739,8 @@ def main():
     centros = None
     if args.garimpar:
         picks = triagem.screen(args.amostra or 60 * args.garimpar, args.garimpar,
-                               args.triagem_min if args.triagem_min is not None else triagem.TRIAGEM_MIN, args.workers)
+                               args.triagem_min if args.triagem_min is not None else triagem.TRIAGEM_MIN, args.workers,
+                               tipo=args.tipo)
         if not picks:
             print("Nenhuma seed passou na triagem: aumente --amostra ou baixe --triagem-min.")
             return
@@ -752,7 +755,7 @@ def main():
         if new_file:
             csv.writer(log, delimiter=";").writerow(["seed", "status", "achados", "minutos"])
         run_seeds(seeds, rules, args.radius, args.verbose, not args.sem_achados, args.limit, log,
-                  None if args.sem_anel else args.anel_min, centros)
+                  None if args.sem_anel else args.anel_min, centros, args.tipo)
     print("Interface: http://localhost:8100/ui/  (servir: cd bluemap && java -jar bluemap-cli.jar -w; reinicie-o se ja estava ligado)")
 
 
